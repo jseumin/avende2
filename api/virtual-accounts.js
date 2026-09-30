@@ -126,7 +126,7 @@ async function ensureGroupDeadline(groupId) {
   }
 
   try {
-    const response = await fetch(`${QSTASH_URL}/v2/publish/${encodeURIComponent(`${PUBLIC_APP_URL}/api/expire-group`)}`, {
+    const response = await fetch(`${QSTASH_URL}/v2/publish/${PUBLIC_APP_URL}/api/expire-group`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${QSTASH_TOKEN}`,
