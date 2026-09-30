@@ -136,7 +136,10 @@ async function ensureGroupDeadline(groupId) {
       },
       body: JSON.stringify({ groupId })
     });
-    if (!response.ok) throw new Error("입금 마감 예약을 등록하지 못했습니다.");
+    if (!response.ok) {
+      const responseBody = (await response.text()).slice(0, 500);
+      throw new Error(`QStash 예약 실패 (HTTP ${response.status}): ${responseBody || "응답 내용 없음"}`);
+    }
   } catch (error) {
     await redisCommand(["DEL", groupKey]);
     throw error;
