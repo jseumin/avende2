@@ -17,7 +17,7 @@ function json(res, status, body) {
 }
 
 function validateEnvironment() {
-  const { TOSS_CLIENT_KEY, TOSS_SECRET_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, PUBLIC_APP_URL, QSTASH_TOKEN, CRON_SECRET } = process.env;
+  const { TOSS_CLIENT_KEY, TOSS_SECRET_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, PUBLIC_APP_URL, QSTASH_URL, QSTASH_TOKEN, CRON_SECRET } = process.env;
   if (!TOSS_CLIENT_KEY || !TOSS_CLIENT_KEY.startsWith("test_ck_")) {
     throw new Error("Vercel에 test_ck_로 시작하는 Toss 테스트 클라이언트 키를 설정해 주세요.");
   }
@@ -30,10 +30,13 @@ function validateEnvironment() {
   if (!PUBLIC_APP_URL || !/^https:\/\/[a-z0-9.-]+$/i.test(PUBLIC_APP_URL)) {
     throw new Error("Vercel에 https:// 주소 형식의 PUBLIC_APP_URL을 설정해 주세요.");
   }
+  if (!QSTASH_URL || !/^https:\/\/[a-z0-9.-]+$/i.test(QSTASH_URL)) {
+    throw new Error("Vercel에 https:// 주소 형식의 QSTASH_URL을 설정해 주세요.");
+  }
   if (!QSTASH_TOKEN || !CRON_SECRET) {
     throw new Error("Vercel에 Upstash QStash token과 CRON_SECRET 환경 변수를 설정해 주세요.");
   }
-  return { TOSS_CLIENT_KEY, TOSS_SECRET_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, PUBLIC_APP_URL, QSTASH_TOKEN, CRON_SECRET };
+  return { TOSS_CLIENT_KEY, TOSS_SECRET_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, PUBLIC_APP_URL, QSTASH_URL, QSTASH_TOKEN, CRON_SECRET };
 }
 
 async function redisCommand(command) {
@@ -99,7 +102,7 @@ function validGroupId(groupId) {
 }
 
 async function ensureGroupDeadline(groupId) {
-  const { PUBLIC_APP_URL, QSTASH_TOKEN, CRON_SECRET } = validateEnvironment();
+  const { PUBLIC_APP_URL, QSTASH_URL, QSTASH_TOKEN, CRON_SECRET } = validateEnvironment();
   const groupKey = `${keyPrefix}:group`;
   const current = await readRecord(groupKey);
   if (current) {
@@ -123,7 +126,7 @@ async function ensureGroupDeadline(groupId) {
   }
 
   try {
-    const response = await fetch(`https://qstash.upstash.io/v2/publish/${encodeURIComponent(`${PUBLIC_APP_URL}/api/expire-group`)}`, {
+    const response = await fetch(`${QSTASH_URL}/v2/publish/${encodeURIComponent(`${PUBLIC_APP_URL}/api/expire-group`)}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${QSTASH_TOKEN}`,
