@@ -26,6 +26,38 @@ const paymentParticipants = [{ name: "민지", amount: 15000 }, { name: "서연"
 const demoGroupId = "demo-group-auto-refund-01";
 const bankNames = { "06": "KB국민은행", "11": "NH농협은행", "20": "우리은행", "81": "하나은행", "88": "신한은행" };
 
+function mapRecruitmentPost(row) {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    restaurant: row.restaurant,
+    emoji: row.emoji,
+    theme: row.theme,
+    category: row.category,
+    distance: row.distance_meters,
+    joined: row.joined,
+    max: row.max_participants,
+    minimum: row.minimum_amount,
+    amount: row.current_amount,
+    deadline: row.deadline,
+    leader: row.leader,
+    rating: String(row.rating),
+    trades: row.trades,
+    note: row.note
+  };
+}
+
+async function loadRecruitmentPosts() {
+  if (!authState.client) return;
+  const { data, error } = await authState.client
+    .from("recruitment_posts")
+    .select("*")
+    .eq("status", "open")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  posts.splice(0, posts.length, ...data.map(mapRecruitmentPost));
+}
+
 const won = (value) => `${value.toLocaleString("ko-KR")}원`;
 const escapeHTML = (value) => String(value).replace(/[&<>"']/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -34,8 +66,7 @@ const avatarClass = (name) => ({ 서연: "avatar-me", 민지: "avatar-purple", �
 const avatar = (name, large = false) => `<span class="avatar ${large ? "avatar-large" : avatarClass(name)}">${escapeHTML(name.slice(0, 1))}</span>`;
 const currentUserName = () => authState.user ? authDisplayName() : "게스트";
 const participantName = (name) => name === "서연" ? currentUserName() : name;
-const isPostOwner = (post) => post.ownerId === (authState.user?.id || "guest")
-  || Boolean(authState.user?.email && post.ownerEmail === authState.user.email);
+const isPostOwner = (post) => post.ownerId === (authState.user?.id || "guest");
 
 function showToast(message) {
   toast.textContent = message;
@@ -70,11 +101,11 @@ function setPage(page) {
 }
 
 function renderPostCard(post) {
-  return `<article class="post-card" data-post="${post.id}" tabindex="0" aria-label="${post.restaurant} 모집글 상세 보기">
+  return `<article class="post-card" data-post="${escapeHTML(post.id)}" tabindex="0" aria-label="${escapeHTML(post.restaurant)} 모집글 상세 보기">
     <div class="post-top">
-      <div class="food-thumb ${post.theme}">${post.emoji}</div>
+      <div class="food-thumb ${escapeHTML(post.theme)}">${escapeHTML(post.emoji)}</div>
       <div class="post-head">
-        <div class="post-restaurant"><strong>${post.restaurant}</strong><span class="tag">${post.category}</span></div>
+        <div class="post-restaurant"><strong>${escapeHTML(post.restaurant)}</strong><span class="tag">${escapeHTML(post.category)}</span></div>
         <div class="post-sub">최소주문 ${won(post.minimum)}</div>
       </div>
       <span class="post-distance">⌖ ${post.distance}m</span>
@@ -82,7 +113,7 @@ function renderPostCard(post) {
     <div class="post-meta"><span class="member-count"><b>${post.joined}</b> / ${post.max}명 모집 중</span><span class="post-deadline">◷ ${post.deadline}</span></div>
     <div class="post-money"><span>현재 모인 금액</span><strong>${won(post.amount)}</strong></div>
     <div class="post-money"><span>최소주문까지</span><strong class="money-need">${won(Math.max(post.minimum - post.amount, 0))} 남음</strong></div>
-    <div class="leader-line">${avatar(post.leader)}<span>${escapeHTML(post.leader)} 리더</span><span class="leader-rating"><b class="star">★</b> ${post.rating} · 거래 ${post.trades}회</span></div>
+    <div class="leader-line">${avatar(post.leader)}<span>${escapeHTML(post.leader)} 리더</span><span class="leader-rating"><b class="star">★</b> ${escapeHTML(post.rating)} · 거래 ${post.trades}회</span></div>
   </article>`;
 }
 
@@ -118,10 +149,10 @@ function detailPage() {
   const full = post.joined >= post.max;
   return `<div class="page-heading"><div><div class="eyebrow">GROUP ORDER · ${post.distance}M AWAY</div><h1>모집글 상세</h1><p class="subheading">함께 주문할 이웃과 자세한 내용을 확인해요.</p></div><button class="secondary-button" data-page="discover">← 목록으로</button></div>
     <div class="detail-layout"><section class="page-card">
-      <div class="detail-food"><div class="food-thumb ${post.theme}">${post.emoji}</div><div><span class="tag">${post.category}</span><h2>${post.restaurant}</h2><p>⌖ 내 위치에서 ${post.distance}m · 배달 예정 약 40분</p></div></div>
+      <div class="detail-food"><div class="food-thumb ${escapeHTML(post.theme)}">${escapeHTML(post.emoji)}</div><div><span class="tag">${escapeHTML(post.category)}</span><h2>${escapeHTML(post.restaurant)}</h2><p>⌖ 내 위치에서 ${post.distance}m · 배달 예정 약 40분</p></div></div>
       <div class="detail-stats"><div class="detail-stat"><small>모집 인원</small><strong>${post.joined} / ${post.max}명</strong></div><div class="detail-stat"><small>최소주문금액</small><strong>${won(post.minimum)}</strong></div><div class="detail-stat"><small>현재 주문금액</small><strong>${won(post.amount)}</strong></div></div>
-      <div class="detail-block"><h3>리더의 한마디</h3><p>${post.note}</p></div>
-      <div class="detail-block"><h3>모집 안내</h3><p>모집 마감 ${post.deadline}<br />메뉴는 매칭 후 공동 채팅방에서 함께 정해요. 만남 장소와 수령 시간도 채팅으로 편하게 조율할 수 있어요.</p></div>
+      <div class="detail-block"><h3>리더의 한마디</h3><p>${escapeHTML(post.note)}</p></div>
+      <div class="detail-block"><h3>모집 안내</h3><p>모집 마감 ${escapeHTML(post.deadline)}<br />메뉴는 매칭 후 공동 채팅방에서 함께 정해요. 만남 장소와 수령 시간도 채팅으로 편하게 조율할 수 있어요.</p></div>
     </section><aside class="page-card"><div class="section-title"><h2>리더 정보</h2><button class="text-button" data-action="leader-profile">프로필 보기</button></div>
       <div class="leader-card">${avatar(post.leader, true)}<div class="leader-info"><strong>${escapeHTML(post.leader)}</strong><small>따뜻한 한 끼를 함께해요</small></div></div>
       <div class="reputation-row"><div><strong><span class="star">★</span> ${post.rating}</strong>평점</div><div><strong>${post.trades}회</strong>거래 횟수</div><div><strong>100%</strong>매너 온도</div></div>
@@ -428,6 +459,15 @@ async function initializeAuth() {
     authState.error = error.message;
     console.error("Supabase authentication initialization error:", error.message);
     updateAuthUI();
+    return;
+  }
+
+  try {
+    await loadRecruitmentPosts();
+    render();
+  } catch (error) {
+    console.error("Recruitment posts loading error:", error.message);
+    showToast(`모집글을 불러오지 못했습니다: ${error.message}`);
   }
 }
 
@@ -538,7 +578,8 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (target.dataset.post) {
-    selectedPost = posts.find((post) => post.id === Number(target.dataset.post));
+    selectedPost = posts.find((post) => String(post.id) === target.dataset.post);
+    if (!selectedPost) return;
     setPage("detail");
     return;
   }
@@ -549,7 +590,7 @@ document.addEventListener("click", (event) => {
     case "auth-mode-reset": showAuthModal("reset"); break;
     case "auth-logout": signOut(); break;
     case "manage-owned-post": {
-      selectedPost = posts.find((post) => post.id === Number(target.dataset.postId)) || null;
+      selectedPost = posts.find((post) => String(post.id) === target.dataset.postId) || null;
       if (selectedPost) setPage("detail");
       break;
     }
@@ -622,15 +663,36 @@ document.addEventListener("submit", async (event) => {
   }
   if (event.target.id === "createForm") {
     event.preventDefault();
+    await authInitialization;
+    if (!authState.user || !authState.client) {
+      showToast("모집글을 등록하려면 먼저 로그인해 주세요.");
+      showAuthModal("login");
+      return;
+    }
     const form = new FormData(event.target);
-    const newPost = {
-      id: Date.now(), ownerId: authState.user?.id || "guest", ownerEmail: authState.user?.email || null,
-      restaurant: escapeHTML(form.get("restaurant")), emoji: categoryIcons[form.get("category")] || "🍽️",
-      theme: "chicken", category: form.get("category"), distance: 90, joined: 1,
-      max: Number.parseInt(form.get("members"), 10), minimum: Number(form.get("minimum")),
-      amount: Number(form.get("current") || 0), deadline: `${form.get("deadline")} 마감`,
-      leader: currentUserName(), rating: "4.8", trades: 23, note: escapeHTML(form.get("note") || "함께 주문해요!")
+    const payload = {
+      owner_id: authState.user.id,
+      restaurant: String(form.get("restaurant")).trim(),
+      emoji: categoryIcons[form.get("category")] || "🍽️",
+      theme: "chicken",
+      category: String(form.get("category")),
+      distance_meters: 90,
+      joined: 1,
+      max_participants: Number.parseInt(String(form.get("members")), 10),
+      minimum_amount: Number(form.get("minimum")),
+      current_amount: Number(form.get("current") || 0),
+      deadline: `${form.get("deadline")} 마감`,
+      leader: currentUserName(),
+      rating: 4.8,
+      trades: 0,
+      note: String(form.get("note") || "함께 주문해요!").trim()
     };
+    const { data, error } = await authState.client.from("recruitment_posts").insert(payload).select("*").single();
+    if (error) {
+      showToast(`모집글을 저장하지 못했습니다: ${error.message}`);
+      return;
+    }
+    const newPost = mapRecruitmentPost(data);
     posts.unshift(newPost);
     selectedPost = newPost;
     selectedCategory = "전체";
