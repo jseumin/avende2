@@ -20,8 +20,9 @@
       <div class="eyebrow">TOSS VIRTUAL ACCOUNT</div>
       <h1>가상계좌 발급이 완료되지 않았어요</h1>
       <p class="subheading" id="message">발급을 취소했거나 진행 중 오류가 발생했어요.</p>
-      <a class="primary-button" href="/?page=payment">입금 현황으로 돌아가기</a>
+      <a class="primary-button" id="returnLink" href="/?page=payment">입금 현황으로 돌아가기</a>
     </main>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
       const params = new URLSearchParams(location.search);
       const message = document.querySelector("#message");
@@ -29,15 +30,47 @@
       const text = params.get("message");
       if (code || text) message.textContent = [code, text].filter(Boolean).join(" · ");
 
+      const groupId = params.get("groupId");
       const orderId = params.get("orderId");
       const participantId = params.get("participantId");
-      if (orderId && participantId) {
-        fetch("/api/virtual-accounts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "abandon", groupId: "demo-group-auto-refund-01", participantId, orderId })
-        });
+      const returnLink = document.querySelector("#returnLink");
+      const canAbandon = Boolean(groupId && orderId && participantId);
+      let cleanupPending = canAbandon;
+      if (groupId) {
+        returnLink.href = `/?page=payment&postId=${encodeURIComponent(groupId)}`;
       }
+      returnLink.addEventListener("click", (event) => {
+        if (cleanupPending) event.preventDefault();
+      });
+      async function abandonPendingAccount() {
+        if (!groupId || !orderId || !participantId) return;
+        const configResponse = await fetch("/api/auth-config", { cache: "no-store" });
+        const config = await configResponse.json();
+        if (!configResponse.ok || !window.supabase?.createClient) {
+          throw new Error(config.error || "로그인 정보를 확인할 수 없습니다.");
+        }
+        const client = window.supabase.createClient(config.url, config.anonKey);
+        const { data, error } = await client.auth.getSession();
+        if (error) throw error;
+        if (!data.session) throw new Error("다시 로그인한 뒤 입금 현황을 확인해 주세요.");
+        const response = await fetch("/api/virtual-accounts", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${data.session.access_token}`
+          },
+          body: JSON.stringify({ action: "abandon", groupId, participantId, orderId })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "결제 요청 상태를 정리하지 못했습니다.");
+      }
+      abandonPendingAccount()
+        .catch((error) => {
+          message.textContent = `${message.textContent}\n${error.message}`;
+        })
+        .finally(() => {
+          cleanupPending = false;
+        });
     </script>
   </body>
 </html>

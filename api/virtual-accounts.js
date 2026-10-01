@@ -1,13 +1,67 @@
 const crypto = require("node:crypto");
+const {
+  authenticateSupabaseRequest,
+  beginRecruitmentPayments,
+  getRecruitmentPaymentRoster
+} = require("./lib/supabase-user");
 
-const participants = {
-  "민지": 15000,
-  "서연": 9000,
-  "유진": 8000
-};
+const legacyParticipants = { 민지: 15000, 서연: 9000, 유진: 8000 };
 const keyPrefix = "moa:demo-group-auto-refund-01";
 const recordTtlSeconds = 60 * 60 * 24 * 30;
-const isParticipant = (id) => Object.hasOwn(participants, id);
+const legacyGroupId = "demo-group-auto-refund-01";
+const isLegacyGroup = (groupId) => groupId === legacyGroupId;
+const isUuid = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+function groupKey(groupId) {
+  return isLegacyGroup(groupId) ? `${keyPrefix}:group` : `${keyPrefix}:group:${groupId}`;
+}
+
+function accountKey(groupId, participantId) {
+  return isLegacyGroup(groupId)
+    ? `${keyPrefix}:${participantId}`
+    : `${keyPrefix}:group:${groupId}:participant:${participantId}`;
+}
+
+function scopedOrderKey(groupId, orderId) {
+  return isLegacyGroup(groupId)
+    ? `${keyPrefix}:order:${orderId}`
+    : `${keyPrefix}:group:${groupId}:order:${orderId}`;
+}
+
+function orderIndexKey(orderId) {
+  return `${keyPrefix}:order-index:${orderId}`;
+}
+
+async function readRecord(key) {
+  const value = await redisCommand(["GET", key]);
+  return value ? JSON.parse(value) : null;
+}
+
+async function writeRecord(key, record) {
+  await redisCommand(["SET", key, JSON.stringify(record), "EX", String(recordTtlSeconds)]);
+}
+
+async function writeAccountAndOrder(record) {
+  await Promise.all([
+    writeRecord(accountKey(record.groupId, record.participantId), record),
+    writeRecord(scopedOrderKey(record.groupId, record.orderId), record),
+    writeRecord(orderIndexKey(record.orderId), record)
+  ]);
+}
+
+async function getOrderRecord(orderId) {
+  const indexed = await readRecord(orderIndexKey(orderId));
+  return indexed || readRecord(`${keyPrefix}:order:${orderId}`);
+}
+
+async function readGroup(groupId) {
+  return readRecord(groupKey(groupId));
+}
+
+function groupParticipants(group) {
+  if (Array.isArray(group?.participants)) return group.participants;
+  return Object.entries(legacyParticipants).map(([id, amount]) => ({ id, name: id, amount }));
+}
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -54,15 +108,6 @@ async function redisCommand(command) {
   return result.result;
 }
 
-async function readRecord(key) {
-  const value = await redisCommand(["GET", key]);
-  return value ? JSON.parse(value) : null;
-}
-
-async function writeRecord(key, record) {
-  await redisCommand(["SET", key, JSON.stringify(record), "EX", String(recordTtlSeconds)]);
-}
-
 async function tossRequest(path, options = {}) {
   const { TOSS_SECRET_KEY } = validateEnvironment();
   const response = await fetch(`https://api.tosspayments.com${path}`, {
@@ -83,7 +128,7 @@ async function tossRequest(path, options = {}) {
 }
 
 function publicAccount(record, includeAccountNumber = false) {
-  const account = record.virtualAccount || {};
+  const account = record?.virtualAccount || {};
   return {
     participantId: record.participantId,
     participantName: record.participantName,
@@ -98,14 +143,38 @@ function publicAccount(record, includeAccountNumber = false) {
 }
 
 function validGroupId(groupId) {
-  return groupId === "demo-group-auto-refund-01";
+  return isLegacyGroup(groupId) || isUuid(groupId);
 }
 
-async function ensureGroupDeadline(groupId) {
+async function authenticateGroupRequest(req, groupId) {
+  const context = await authenticateSupabaseRequest(req);
+  if (isLegacyGroup(groupId)) return { context, roster: Object.entries(legacyParticipants).map(([id, amount]) => ({ participant_id: id, participant_name: id, amount })) };
+  if (!isUuid(groupId)) {
+    const error = new Error("유효하지 않은 모집글 ID입니다.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const roster = await getRecruitmentPaymentRoster(context, groupId);
+  if (!Array.isArray(roster) || !roster.some((person) => person.participant_id === context.user.id)) {
+    const error = new Error("해당 모집글의 승인된 참여자만 입금 정보를 볼 수 있습니다.");
+    error.statusCode = 403;
+    throw error;
+  }
+  roster.sort((left, right) => left.participant_id.localeCompare(right.participant_id));
+  return { context, roster };
+}
+
+async function ensureGroupDeadline(groupId, context, roster) {
   const { PUBLIC_APP_URL, QSTASH_URL, QSTASH_TOKEN, CRON_SECRET } = validateEnvironment();
-  const groupKey = `${keyPrefix}:group`;
-  const current = await readRecord(groupKey);
+  const redisGroupKey = groupKey(groupId);
+  const current = await readRecord(redisGroupKey);
   if (current) {
+    const sameRoster = JSON.stringify(current.participants) === JSON.stringify(roster);
+    if (!sameRoster) {
+      const error = new Error("참여자 또는 메뉴 금액이 바뀌어 결제를 시작할 수 없습니다.");
+      error.statusCode = 409;
+      throw error;
+    }
     if (current.status !== "COLLECTING" || Date.now() >= current.deadlineAt) {
       const error = new Error("공동배달의 입금 기한이 끝나 취소 처리를 진행하고 있어요.");
       error.statusCode = 409;
@@ -114,11 +183,20 @@ async function ensureGroupDeadline(groupId) {
     return current;
   }
 
+  if (!isLegacyGroup(groupId)) {
+    await beginRecruitmentPayments(context, groupId);
+  }
   const deadlineAt = Date.now() + 60 * 60_000;
-  const group = { groupId, status: "COLLECTING", deadlineAt, createdAt: new Date().toISOString() };
-  const created = await redisCommand(["SET", groupKey, JSON.stringify(group), "NX", "EX", String(recordTtlSeconds)]);
+  const group = {
+    groupId,
+    status: isLegacyGroup(groupId) ? "COLLECTING" : "PREPARING",
+    participants: roster,
+    deadlineAt,
+    createdAt: new Date().toISOString()
+  };
+  const created = await redisCommand(["SET", redisGroupKey, JSON.stringify(group), "NX", "EX", String(recordTtlSeconds)]);
   if (created !== "OK") {
-    const raced = await readRecord(groupKey);
+    const raced = await readRecord(redisGroupKey);
     if (raced?.status === "COLLECTING" && Date.now() < raced.deadlineAt) return raced;
     const error = new Error("공동배달 입금 상태를 준비하지 못했습니다. 다시 시도해 주세요.");
     error.statusCode = 409;
@@ -140,8 +218,12 @@ async function ensureGroupDeadline(groupId) {
       const responseBody = (await response.text()).slice(0, 500);
       throw new Error(`QStash 예약 실패 (HTTP ${response.status}): ${responseBody || "응답 내용 없음"}`);
     }
+    if (!isLegacyGroup(groupId)) {
+      group.status = "COLLECTING";
+      await writeRecord(redisGroupKey, group);
+    }
   } catch (error) {
-    await redisCommand(["DEL", groupKey]);
+    await redisCommand(["DEL", redisGroupKey]);
     throw error;
   }
   return group;
@@ -149,18 +231,24 @@ async function ensureGroupDeadline(groupId) {
 
 async function handleGet(req, res) {
   const { groupId, participantId } = req.query;
-  if (!validGroupId(groupId)) return json(res, 400, { error: "유효하지 않은 공동배달 ID입니다." });
-  if (participantId && !isParticipant(participantId)) return json(res, 400, { error: "유효하지 않은 참여자입니다." });
+  if (!validGroupId(groupId)) return json(res, 400, { error: "유효하지 않은 모집글 ID입니다." });
+  const { context, roster } = await authenticateGroupRequest(req, groupId);
+  if (participantId && participantId !== context.user.id) {
+    return json(res, 403, { error: "본인의 계좌 번호만 조회할 수 있습니다." });
+  }
 
-  const [group, accounts] = await Promise.all([
-    readRecord(`${keyPrefix}:group`),
-    Promise.all(Object.keys(participants).map(async (id) => {
-      const record = await readRecord(`${keyPrefix}:${id}`);
-      return record
-        ? publicAccount(record)
-        : { participantId: id, participantName: id, amount: participants[id], status: "NOT_ISSUED" };
-    }))
-  ]);
+  const group = await readRecord(groupKey(groupId));
+  const accounts = await Promise.all(roster.map(async (person) => {
+    const participantIdValue = person.participant_id || person.id;
+    const record = await readRecord(accountKey(groupId, participantIdValue));
+    if (record) return publicAccount(record, participantId === participantIdValue);
+    return {
+      participantId: participantIdValue,
+      participantName: person.participant_name || person.name,
+      amount: person.amount,
+      status: "NOT_ISSUED"
+    };
+  }));
   return json(res, 200, {
     accounts,
     group: group ? { status: group.status, deadlineAt: group.deadlineAt, refundRequested: group.refundRequested || 0, refundActionRequired: group.refundActionRequired || 0 } : null
@@ -169,24 +257,31 @@ async function handleGet(req, res) {
 
 async function handlePost(req, res) {
   const { groupId, participantId, action, orderId } = req.body || {};
-  if (!validGroupId(groupId) || !isParticipant(participantId)) {
-    return json(res, 400, { error: "공동배달 또는 참여자 정보를 확인해 주세요." });
+  if (!validGroupId(groupId)) return json(res, 400, { error: "유효하지 않은 모집글 ID입니다." });
+  const { context, roster } = await authenticateGroupRequest(req, groupId);
+  if (participantId !== context.user.id) {
+    return json(res, 403, { error: "본인 가상계좌만 발급하거나 관리할 수 있습니다." });
+  }
+  const participant = roster.find((person) => (person.participant_id || person.id) === participantId);
+  if (!participant) return json(res, 403, { error: "승인된 모집글 참여자만 결제할 수 있습니다." });
+  const amount = participant.amount;
+  if (!Number.isSafeInteger(amount) || amount <= 0) {
+    return json(res, 409, { error: "결제 전에 본인 메뉴를 선택해 주세요." });
   }
 
-  const recordKey = `${keyPrefix}:${participantId}`;
+  const redisAccountKey = accountKey(groupId, participantId);
   if (action === "abandon") {
     if (typeof orderId !== "string") return json(res, 400, { error: "중단할 주문번호가 없습니다." });
-    const pending = await readRecord(`${keyPrefix}:order:${orderId}`);
+    const pending = await readRecord(scopedOrderKey(groupId, orderId));
     if (!pending || pending.participantId !== participantId || pending.status !== "REQUESTING") {
       return json(res, 409, { error: "중단할 결제 요청을 찾을 수 없습니다." });
     }
     pending.status = "FAILED";
-    await writeRecord(recordKey, pending);
-    await writeRecord(`${keyPrefix}:order:${orderId}`, pending);
+    await writeAccountAndOrder(pending);
     return json(res, 200, { abandoned: true });
   }
 
-  const existing = await readRecord(recordKey);
+  const existing = await readRecord(redisAccountKey);
   if (existing?.status === "WAITING_FOR_DEPOSIT" || existing?.status === "PAID") {
     return json(res, 409, { error: "이미 발급된 가상계좌가 있어요. 기존 계좌를 확인해 주세요." });
   }
@@ -194,45 +289,48 @@ async function handlePost(req, res) {
     return json(res, 409, { error: "가상계좌 발급이 진행 중이에요. 잠시 후 다시 시도해 주세요." });
   }
 
-  const lockKey = `${recordKey}:lock`;
+  const lockKey = `${redisAccountKey}:lock`;
   const lockToken = crypto.randomUUID();
   const locked = await redisCommand(["SET", lockKey, lockToken, "NX", "EX", "30"]);
   if (locked !== "OK") return json(res, 409, { error: "가상계좌 발급을 처리 중이에요. 잠시 후 다시 시도해 주세요." });
 
   try {
-    const group = await ensureGroupDeadline(groupId);
-    const current = await readRecord(recordKey);
+    const group = await ensureGroupDeadline(groupId, context, roster.map((person) => ({
+      id: person.participant_id || person.id,
+      name: person.participant_name || person.name,
+      amount: person.amount
+    })));
+    const current = await readRecord(redisAccountKey);
     if (current?.status === "WAITING_FOR_DEPOSIT" || current?.status === "PAID") {
       return json(res, 409, { error: "이미 발급된 가상계좌가 있어요. 기존 계좌를 확인해 주세요." });
     }
     if (current?.status === "REQUESTING") {
       current.status = "EXPIRED";
-      await writeRecord(`${keyPrefix}:order:${current.orderId}`, current);
+      await writeAccountAndOrder(current);
     }
     const { TOSS_CLIENT_KEY, PUBLIC_APP_URL } = validateEnvironment();
-    const orderId = `MOA-${crypto.randomUUID()}`;
-    const amount = participants[participantId];
+    const newOrderId = `MOA-${crypto.randomUUID()}`;
+    const participantName = participant.participant_name || participant.name;
     const pending = {
       groupId,
       participantId,
-      participantName: participantId,
+      participantName,
       amount,
-      orderId,
+      orderId: newOrderId,
       status: "REQUESTING",
       createdAt: new Date().toISOString(),
       deadlineAt: group.deadlineAt
     };
-    await writeRecord(recordKey, pending);
-    await writeRecord(`${keyPrefix}:order:${orderId}`, pending);
+    await writeAccountAndOrder(pending);
     return json(res, 201, {
       clientKey: TOSS_CLIENT_KEY,
-      orderId,
+      orderId: newOrderId,
       amount,
-      orderName: `모아먹자 공동배달 분담금 - ${participantId}`,
-      customerName: participantId,
+      orderName: `모아먹자 공동배달 분담금 - ${participantName}`,
+      customerName: participantName,
       dueDate: new Date(group.deadlineAt + 9 * 60 * 60_000).toISOString().replace(/\.\d{3}Z$/, ""),
       successUrl: `${PUBLIC_APP_URL}/payment-success.html`,
-      failUrl: `${PUBLIC_APP_URL}/payment-fail.html?orderId=${encodeURIComponent(orderId)}&participantId=${encodeURIComponent(participantId)}`
+      failUrl: `${PUBLIC_APP_URL}/payment-fail.html?groupId=${encodeURIComponent(groupId)}&orderId=${encodeURIComponent(newOrderId)}&participantId=${encodeURIComponent(participantId)}`
     });
   } finally {
     const currentToken = await redisCommand(["GET", lockKey]);
@@ -262,5 +360,14 @@ module.exports.writeRecord = writeRecord;
 module.exports.tossRequest = tossRequest;
 module.exports.publicAccount = publicAccount;
 module.exports.keyPrefix = keyPrefix;
-module.exports.participants = participants;
+module.exports.participants = legacyParticipants;
+module.exports.groupKey = groupKey;
+module.exports.accountKey = accountKey;
+module.exports.scopedOrderKey = scopedOrderKey;
+module.exports.orderIndexKey = orderIndexKey;
+module.exports.writeAccountAndOrder = writeAccountAndOrder;
+module.exports.getOrderRecord = getOrderRecord;
+module.exports.readGroup = readGroup;
+module.exports.groupParticipants = groupParticipants;
+module.exports.validGroupId = validGroupId;
 module.exports.validateEnvironment = validateEnvironment;

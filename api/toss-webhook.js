@@ -1,4 +1,4 @@
-const { readRecord, writeRecord, tossRequest, keyPrefix } = require("./virtual-accounts");
+const { writeAccountAndOrder, tossRequest, getOrderRecord, readGroup } = require("./virtual-accounts");
 const { cancelGroup, markGroupReadyIfPaid } = require("./lib/cancel-group");
 
 function json(res, status, body) {
@@ -20,7 +20,7 @@ module.exports = async function tossWebhook(req, res) {
       return json(res, 400, { error: "필수 웹훅 정보가 없습니다." });
     }
 
-    const record = await readRecord(`${keyPrefix}:order:${orderId}`);
+    const record = await getOrderRecord(orderId);
     if (!record || record.orderId !== orderId || typeof record.secret !== "string") {
       return json(res, 404, { error: "등록된 가상계좌 주문을 찾을 수 없습니다." });
     }
@@ -48,9 +48,8 @@ module.exports = async function tossWebhook(req, res) {
       return json(res, 400, { error: "처리할 수 없는 가상계좌 상태입니다." });
     }
 
-    await writeRecord(`${keyPrefix}:${record.participantId}`, record);
-    await writeRecord(`${keyPrefix}:order:${orderId}`, record);
-    const group = await readRecord(`${keyPrefix}:group`);
+    await writeAccountAndOrder(record);
+    const group = await readGroup(record.groupId);
     const allPaid = status === "DONE" && await markGroupReadyIfPaid(record.groupId);
     if (!allPaid && (group?.status !== "COLLECTING" || Date.now() >= group.deadlineAt)) {
       await cancelGroup(record.groupId);

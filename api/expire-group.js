@@ -1,5 +1,5 @@
 const crypto = require("node:crypto");
-const { validateEnvironment } = require("./virtual-accounts");
+const { validateEnvironment, validGroupId } = require("./virtual-accounts");
 const { cancelGroup } = require("./lib/cancel-group");
 
 function json(res, status, body) {
@@ -24,7 +24,7 @@ module.exports = async function expireGroup(req, res) {
     }
 
     const { groupId } = req.body || {};
-    if (groupId !== "demo-group-auto-refund-01") {
+    if (!validGroupId(groupId)) {
       return json(res, 400, { error: "유효하지 않은 공동배달 ID입니다." });
     }
     const result = await cancelGroup(groupId);

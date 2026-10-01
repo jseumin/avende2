@@ -1,4 +1,4 @@
-const { readRecord, writeRecord, tossRequest, publicAccount, keyPrefix } = require("./virtual-accounts");
+const { writeAccountAndOrder, tossRequest, publicAccount, getOrderRecord, readGroup } = require("./virtual-accounts");
 const { cancelGroup, markGroupReadyIfPaid } = require("./lib/cancel-group");
 
 function json(res, status, body) {
@@ -18,7 +18,7 @@ module.exports = async function confirmVirtualAccount(req, res) {
     if (typeof paymentKey !== "string" || typeof orderId !== "string" || !Number.isSafeInteger(Number(amount))) {
       return json(res, 400, { error: "결제 승인 정보가 올바르지 않습니다." });
     }
-    const record = await readRecord(`${keyPrefix}:order:${orderId}`);
+    const record = await getOrderRecord(orderId);
     if (!record || record.status === "CANCELED" || record.status === "EXPIRED") {
       return json(res, 404, { error: "승인할 공동배달 주문을 찾을 수 없습니다." });
     }
@@ -31,7 +31,7 @@ module.exports = async function confirmVirtualAccount(req, res) {
     if (record.status !== "REQUESTING") {
       return json(res, 409, { error: "현재 결제 요청은 더 이상 승인할 수 없습니다." });
     }
-    const group = await readRecord(`${keyPrefix}:group`);
+    const group = await readGroup(record.groupId);
     if (!group || group.status !== "COLLECTING" || Date.now() >= group.deadlineAt) {
       return json(res, 409, { error: "입금 마감 시간이 지나 가상계좌를 발급할 수 없습니다." });
     }
@@ -54,9 +54,8 @@ module.exports = async function confirmVirtualAccount(req, res) {
       wasPaid: payment.status === "DONE",
       confirmedAt: new Date().toISOString()
     };
-    await writeRecord(`${keyPrefix}:${record.participantId}`, confirmed);
-    await writeRecord(`${keyPrefix}:order:${orderId}`, confirmed);
-    const latestGroup = await readRecord(`${keyPrefix}:group`);
+    await writeAccountAndOrder(confirmed);
+    const latestGroup = await readGroup(record.groupId);
     const groupReady = confirmed.status === "PAID" && await markGroupReadyIfPaid(record.groupId);
     if (!groupReady && (latestGroup?.status !== "COLLECTING" || Date.now() >= latestGroup.deadlineAt)) {
       await cancelGroup(record.groupId);

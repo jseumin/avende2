@@ -37,3 +37,5 @@ module.exports = function authConfig(req, res) {
 
   return json(res, 200, { url: url.origin, anonKey: SUPABASE_ANON_KEY });
 };
+
+module.exports.isPublicKey = isPublicKey;

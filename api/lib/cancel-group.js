@@ -1,9 +1,14 @@
 const crypto = require("node:crypto");
-const { readRecord, writeRecord, tossRequest, keyPrefix, participants } = require("../virtual-accounts");
-
-function accountKey(participantId) {
-  return `${keyPrefix}:${participantId}`;
-}
+const {
+  readRecord,
+  writeRecord,
+  tossRequest,
+  groupKey,
+  accountKey,
+  writeAccountAndOrder,
+  readGroup,
+  groupParticipants
+} = require("../virtual-accounts");
 
 function hasRefundAccount(account) {
   return typeof account?.bankCode === "string"
@@ -37,8 +42,7 @@ async function cancelPayment(record) {
 
   const idempotencyKey = record.cancelIdempotencyKey || crypto.randomUUID();
   const updated = { ...record, status: "CANCEL_REQUESTING", wasPaid, cancelIdempotencyKey: idempotencyKey };
-  await writeRecord(accountKey(record.participantId), updated);
-  await writeRecord(`${keyPrefix}:order:${record.orderId}`, updated);
+  await writeAccountAndOrder(updated);
 
   const canceled = await tossRequest(`/v1/payments/${encodeURIComponent(record.paymentKey)}/cancel`, {
     method: "POST",
@@ -60,8 +64,8 @@ async function cancelPayment(record) {
 }
 
 async function cancelGroup(groupId) {
-  const groupKey = `${keyPrefix}:group`;
-  const group = await readRecord(groupKey);
+  const redisGroupKey = groupKey(groupId);
+  const group = await readGroup(groupId);
   if (!group || group.groupId !== groupId) return { status: "NOT_FOUND" };
   if (group.status === "ORDER_READY") return { status: group.status };
   if (group.status === "COLLECTING" && await markGroupReadyIfPaid(groupId)) {
@@ -73,11 +77,13 @@ async function cancelGroup(groupId) {
 
   group.status = "CANCELLING";
   group.cancellationStartedAt ||= new Date().toISOString();
-  await writeRecord(groupKey, group);
+  await writeRecord(redisGroupKey, group);
 
   let retryNeeded = false;
-  for (const participantId of Object.keys(participants)) {
-    const record = await readRecord(accountKey(participantId));
+  const participants = groupParticipants(group);
+  for (const participant of participants) {
+    const participantId = participant.id;
+    const record = await readRecord(accountKey(groupId, participantId));
     if (!record || ["CANCELED", "EXPIRED", "FAILED", "REFUND_REQUESTED", "REFUND_ACTION_REQUIRED"].includes(record.status)) continue;
 
     let updated = record;
@@ -95,11 +101,10 @@ async function cancelGroup(groupId) {
       updated = { ...record, status: "CANCELED", canceledAt: new Date().toISOString() };
     }
 
-    await writeRecord(accountKey(participantId), updated);
-    await writeRecord(`${keyPrefix}:order:${record.orderId}`, updated);
+    await writeAccountAndOrder(updated);
   }
 
-  const records = await Promise.all(Object.keys(participants).map((id) => readRecord(accountKey(id))));
+  const records = await Promise.all(participants.map((participant) => readRecord(accountKey(groupId, participant.id))));
   const hasRefundActionRequired = records.some((record) => record?.status === "REFUND_ACTION_REQUIRED");
   const hasRefunds = records.some((record) => record?.status === "REFUND_REQUESTED");
   const stillProcessing = records.some((record) => record && !["CANCELED", "EXPIRED", "FAILED", "REFUND_REQUESTED", "REFUND_ACTION_REQUIRED"].includes(record.status));
@@ -114,21 +119,22 @@ async function cancelGroup(groupId) {
   group.refundRequested = records.filter((record) => record?.status === "REFUND_REQUESTED").length;
   group.refundActionRequired = records.filter((record) => record?.status === "REFUND_ACTION_REQUIRED").length;
   group.updatedAt = new Date().toISOString();
-  await writeRecord(groupKey, group);
+  await writeRecord(redisGroupKey, group);
 
   if (retryNeeded || stillProcessing) throw new Error("일부 가상계좌 취소를 완료하지 못해 재시도가 필요합니다.");
   return { status: group.status, refundRequested: group.refundRequested, refundActionRequired: group.refundActionRequired };
 }
 
 async function markGroupReadyIfPaid(groupId) {
-  const groupKey = `${keyPrefix}:group`;
-  const group = await readRecord(groupKey);
+  const redisGroupKey = groupKey(groupId);
+  const group = await readGroup(groupId);
   if (!group || group.groupId !== groupId || group.status !== "COLLECTING") return false;
-  const records = await Promise.all(Object.keys(participants).map((id) => readRecord(accountKey(id))));
+  const participants = groupParticipants(group);
+  const records = await Promise.all(participants.map((participant) => readRecord(accountKey(groupId, participant.id))));
   if (!records.every((record) => record?.status === "PAID")) return false;
   group.status = "ORDER_READY";
   group.allPaidAt = new Date().toISOString();
-  await writeRecord(groupKey, group);
+  await writeRecord(redisGroupKey, group);
   return true;
 }
 

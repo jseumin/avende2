@@ -1,6 +1,9 @@
 const posts = [];
 const applications = [];
 const menuSelections = [];
+const chatMessages = [];
+const receiptConfirmations = [];
+let groupRealtimeChannel = null;
 
 const categories = ["전체", "치킨", "피자", "한식", "중식", "일식", "양식", "분식"];
 const categoryIcons = { 전체: "✦", 치킨: "🍗", 피자: "🍕", 한식: "🍚", 중식: "🥟", 일식: "🍣", 양식: "🍔", 분식: "🍡" };
@@ -57,18 +60,15 @@ let selectedCategory = "전체";
 let sortBy = "distance";
 let selectedPost = null;
 let paid = new Set();
-let received = new Set(["민지", "유진"]);
 let rating = 0;
-const customMenu = [];
 const virtualAccounts = new Map();
 let virtualAccountError = "";
 let accountRefreshTimer = null;
 let paymentGroup = null;
+let paymentGroupId = null;
 let authInitialization = Promise.resolve();
 let passwordRecoveryShown = false;
 const authState = { client: null, user: null, error: "" };
-const paymentParticipants = [{ name: "민지", amount: 15000 }, { name: "서연", amount: 9000 }, { name: "유진", amount: 8000 }];
-const demoGroupId = "demo-group-auto-refund-01";
 const bankNames = { "06": "KB국민은행", "11": "NH농협은행", "20": "우리은행", "81": "하나은행", "88": "신한은행" };
 
 function mapRecruitmentPost(row) {
@@ -87,6 +87,8 @@ function mapRecruitmentPost(row) {
     amount: row.current_amount,
     selectedMenu: row.selected_menu || [],
     deadline: row.deadline,
+    deadlineAt: row.deadline_at || legacyDeadlineAt(row),
+    paymentsStartedAt: row.payments_started_at || null,
     leader: row.leader,
     rating: String(row.rating),
     trades: row.trades,
@@ -127,13 +129,73 @@ async function loadMenuSelections() {
   menuSelections.push(...data);
 }
 
+function getActiveGroupPost() {
+  if (selectedPost && (isPostOwner(selectedPost) || applications.some((application) =>
+    application.post_id === selectedPost.id
+    && application.applicant_id === authState.user?.id
+    && application.status === "approved"))) {
+    return selectedPost;
+  }
+  return posts.find((post) => isPostOwner(post) || applications.some((application) =>
+    application.post_id === post.id
+    && application.applicant_id === authState.user?.id
+    && application.status === "approved")) || null;
+}
+
+async function loadGroupData(post = getActiveGroupPost()) {
+  chatMessages.splice(0, chatMessages.length);
+  receiptConfirmations.splice(0, receiptConfirmations.length);
+  if (!post || !authState.client || !authState.user) return;
+  const [messagesResult, receiptsResult] = await Promise.all([
+    authState.client.from("recruitment_messages")
+      .select("id, post_id, sender_id, sender_name, body, created_at")
+      .eq("post_id", post.id)
+      .order("created_at", { ascending: true }),
+    authState.client.from("recruitment_receipts")
+      .select("user_id, participant_name, created_at")
+      .eq("post_id", post.id)
+      .order("created_at", { ascending: true })
+  ]);
+  if (messagesResult.error) throw messagesResult.error;
+  if (receiptsResult.error) throw receiptsResult.error;
+  chatMessages.push(...messagesResult.data);
+  receiptConfirmations.push(...receiptsResult.data);
+}
+
 async function refreshRecruitmentData() {
   await loadRecruitmentPosts();
   await loadApplications();
   await loadMenuSelections();
+  if (authState.user) await loadGroupData();
   if (selectedPost) selectedPost = posts.find((post) => post.id === selectedPost.id) || null;
   if (currentPage === "detail" && !selectedPost) currentPage = "discover";
   render();
+}
+
+function remainingTime(deadlineAt) {
+  const time = Date.parse(deadlineAt || "");
+  if (!Number.isFinite(time)) return "마감 시간 정보 없음";
+  const remaining = time - Date.now();
+  if (remaining <= 0) return "모집 마감";
+  const minutes = Math.floor(remaining / 60_000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const restMinutes = minutes % 60;
+  if (days) return `${days}일 ${hours}시간 남음`;
+  if (hours) return `${hours}시간 ${restMinutes}분 남음`;
+  const seconds = Math.floor((remaining % 60_000) / 1000);
+  return `${restMinutes}분 ${seconds}초 남음`;
+}
+
+function updateDeadlineCountdowns() {
+  let deadlineJustExpired = false;
+  document.querySelectorAll("[data-deadline-at]").forEach((element) => {
+    const expired = remainingTime(element.dataset.deadlineAt) === "모집 마감";
+    if (expired && !element.classList.contains("deadline-expired")) deadlineJustExpired = true;
+    element.textContent = expired ? "모집 마감" : remainingTime(element.dataset.deadlineAt);
+    element.classList.toggle("deadline-expired", expired);
+  });
+  if (deadlineJustExpired && currentPage === "delivery") render();
 }
 
 const won = (value) => `${value.toLocaleString("ko-KR")}원`;
@@ -143,8 +205,15 @@ const escapeHTML = (value) => String(value).replace(/[&<>"']/g, (character) => (
 const avatarClass = (name) => ({ 서연: "avatar-me", 민지: "avatar-purple", 준호: "avatar-blue", 하은: "avatar-pink", 도윤: "avatar-purple", 유진: "avatar-pink", 시우: "avatar-blue" }[name] || "avatar-purple");
 const avatar = (name, large = false) => `<span class="avatar ${large ? "avatar-large" : avatarClass(name)}">${escapeHTML(name.slice(0, 1))}</span>`;
 const currentUserName = () => authState.user ? authDisplayName() : "게스트";
-const participantName = (name) => name === "서연" ? currentUserName() : name;
 const isPostOwner = (post) => post.ownerId === (authState.user?.id || "guest");
+
+function legacyDeadlineAt(row) {
+  const minutes = Number.parseInt(String(row.deadline || "").match(/\d+/)?.[0] || "", 10);
+  const createdAt = Date.parse(row.created_at || "");
+  return Number.isFinite(minutes) && Number.isFinite(createdAt)
+    ? new Date(createdAt + minutes * 60_000).toISOString()
+    : null;
+}
 
 function menuSelectionMarkup(restaurantId, selectedItems = []) {
   const restaurant = restaurantCatalog.find((entry) => entry.id === restaurantId);
@@ -156,6 +225,9 @@ function menuSelectionMarkup(restaurantId, selectedItems = []) {
 }
 
 function participantMenuFormMarkup(post, application) {
+  if (post.paymentsStartedAt) {
+    return `<div class="participant-menu"><h3>내 메뉴 선택</h3><p class="subheading">입금이 시작되어 메뉴가 확정됐어요.</p></div>`;
+  }
   if (!restaurantCatalog.some((restaurant) => restaurant.id === post.restaurantId)) {
     return `<div class="participant-menu"><h3>내 메뉴 선택</h3><p class="subheading">이 모집글은 메뉴 선택 기능이 추가되기 전에 등록되어 메뉴 선택을 지원하지 않습니다.</p></div>`;
   }
@@ -202,6 +274,38 @@ function updateParticipantMenuTotal(form) {
   form.querySelector("#participantMenuTotal").textContent = won(total);
 }
 
+function groupParticipants(post = getActiveGroupPost()) {
+  if (!post) return [];
+  const participants = [];
+  if (post.ownerId) {
+    participants.push({
+      id: post.ownerId,
+      name: post.leader,
+      role: "리더",
+      amount: (post.selectedMenu || []).reduce((sum, item) => sum + item.price * item.quantity, 0)
+    });
+  }
+  for (const application of applications.filter((item) => item.post_id === post.id && item.status === "approved")) {
+    const selection = menuSelections.find((item) => item.application_id === application.id);
+    participants.push({
+      id: application.applicant_id,
+      name: application.applicant_name,
+      role: "참여자",
+      amount: selection?.amount || 0,
+      application
+    });
+  }
+  return participants;
+}
+
+function groupOrderLines(post) {
+  return [
+    ...(post.selectedMenu || []).map((item) => ({ ...item, by: post.leader })),
+    ...menuSelections.filter((selection) => selection.post_id === post.id)
+      .flatMap((selection) => selection.selected_menu.map((item) => ({ ...item, by: selection.applicant_name })))
+  ];
+}
+
 function showToast(message) {
   toast.textContent = message;
   toast.classList.add("visible");
@@ -224,11 +328,45 @@ async function readApiResponse(response, fallbackMessage) {
 function setPage(page) {
   window.clearInterval(accountRefreshTimer);
   accountRefreshTimer = null;
+  if (["chat", "payment", "delivery"].includes(page)) {
+    const activePost = getActiveGroupPost();
+    if (!activePost) {
+      showToast("이용하려면 로그인하고 모집글을 만들거나 참여 승인을 받아야 해요.");
+      page = "discover";
+    } else {
+      selectedPost = activePost;
+    }
+  }
+  if (groupRealtimeChannel) {
+    void authState.client?.removeChannel(groupRealtimeChannel);
+    groupRealtimeChannel = null;
+  }
   currentPage = page;
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
   render();
-  if (page === "payment") {
-    refreshVirtualAccounts();
+  if (["chat", "payment", "delivery"].includes(page) && selectedPost && authState.client) {
+    void loadGroupData(selectedPost).then(() => {
+      if (currentPage === page) render();
+    }).catch((error) => showToast(`공동 주문 정보를 불러오지 못했습니다: ${error.message}`));
+    const postId = selectedPost.id;
+    groupRealtimeChannel = authState.client.channel(`recruitment-group-${postId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "recruitment_messages", filter: `post_id=eq.${postId}` }, () => {
+        void loadGroupData(selectedPost).then(render).catch((error) => showToast(`채팅 내용을 새로고침하지 못했습니다: ${error.message}`));
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "recruitment_menu_selections", filter: `post_id=eq.${postId}` }, () => {
+        void refreshRecruitmentData().then(() => currentPage === "payment" && refreshVirtualAccounts())
+          .catch((error) => showToast(`주문 정보를 새로고침하지 못했습니다: ${error.message}`));
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "recruitment_applications", filter: `post_id=eq.${postId}` }, () => {
+        void refreshRecruitmentData().catch((error) => showToast(`참여자 정보를 새로고침하지 못했습니다: ${error.message}`));
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "recruitment_receipts", filter: `post_id=eq.${postId}` }, () => {
+        void loadGroupData(selectedPost).then(render).catch((error) => showToast(`수령 확인을 새로고침하지 못했습니다: ${error.message}`));
+      })
+      .subscribe();
+  }
+  if (["chat", "payment", "delivery"].includes(page)) {
+    void refreshVirtualAccounts();
     accountRefreshTimer = window.setInterval(refreshVirtualAccounts, 8000);
   }
   if (page === "applicants" && authState.user) {
@@ -250,7 +388,7 @@ function renderPostCard(post) {
       </div>
       <span class="post-distance">⌖ ${post.distance}m</span>
     </div>
-    <div class="post-meta"><span class="member-count"><b>${post.joined}</b> / ${post.max}명 모집 중</span><span class="post-deadline">◷ ${post.deadline}</span></div>
+    <div class="post-meta"><span class="member-count"><b>${post.joined}</b> / ${post.max}명 모집 중</span><span class="post-deadline">◷ <span data-deadline-at="${escapeHTML(post.deadlineAt || "")}">${remainingTime(post.deadlineAt)}</span></span></div>
     <div class="post-money"><span>현재 모인 금액</span><strong>${won(post.amount)}</strong></div>
     <div class="post-money"><span>최소주문까지</span><strong class="money-need">${won(Math.max(post.minimum - post.amount, 0))} 남음</strong></div>
     <div class="leader-line">${avatar(post.leader)}<span>${escapeHTML(post.leader)} 리더</span><span class="leader-rating"><b class="star">★</b> ${escapeHTML(post.rating)} · 거래 ${post.trades}회</span></div>
@@ -260,6 +398,7 @@ function renderPostCard(post) {
 function discoverPage() {
   const visible = posts
     .filter((post) => post.distance <= 300)
+    .filter((post) => !post.deadlineAt || Date.parse(post.deadlineAt) > Date.now())
     .filter((post) => selectedCategory === "전체" || post.category === selectedCategory)
     .sort((a, b) => sortBy === "deadline"
       ? Number.parseInt(a.deadline, 10) - Number.parseInt(b.deadline, 10)
@@ -287,6 +426,7 @@ function detailPage() {
   const myApplication = applications.find((application) => application.post_id === post.id && application.applicant_id === authState.user?.id);
   const applicationStatus = myApplication?.status || null;
   const full = post.joined >= post.max;
+  const expired = post.deadlineAt && Date.parse(post.deadlineAt) <= Date.now();
   return `<div class="page-heading"><div><div class="eyebrow">GROUP ORDER · ${post.distance}M AWAY</div><h1>모집글 상세</h1><p class="subheading">함께 주문할 이웃과 자세한 내용을 확인해요.</p></div><button class="secondary-button" data-page="discover">← 목록으로</button></div>
     <div class="detail-layout"><section class="page-card">
       <div class="detail-food"><div class="food-thumb ${escapeHTML(post.theme)}">${escapeHTML(post.emoji)}</div><div><span class="tag">${escapeHTML(post.category)}</span><h2>${escapeHTML(post.restaurant)}</h2><p>⌖ 내 위치에서 ${post.distance}m · 배달 예정 약 40분</p></div></div>
@@ -295,15 +435,15 @@ function detailPage() {
       ${(isOwner || applicationStatus === "approved") ? participantOrdersMarkup(post) : ""}
       ${!isOwner && applicationStatus === "approved" ? participantMenuFormMarkup(post, myApplication) : ""}
       <div class="detail-block"><h3>리더의 한마디</h3><p>${escapeHTML(post.note)}</p></div>
-      <div class="detail-block"><h3>모집 안내</h3><p>모집 마감 ${escapeHTML(post.deadline)}<br />승인된 참가자는 이 화면에서 메뉴를 선택할 수 있어요. 만남 장소와 수령 시간은 채팅으로 조율해요.</p></div>
+      <div class="detail-block"><h3>모집 안내</h3><p>모집 마감 ${escapeHTML(post.deadline)} · <strong data-deadline-at="${escapeHTML(post.deadlineAt || "")}">${remainingTime(post.deadlineAt)}</strong><br />승인된 참가자는 이 화면에서 메뉴를 선택할 수 있어요. 만남 장소와 수령 시간은 채팅으로 조율해요.</p></div>
     </section><aside class="page-card"><div class="section-title"><h2>리더 정보</h2><button class="text-button" data-action="leader-profile">프로필 보기</button></div>
       <div class="leader-card">${avatar(post.leader, true)}<div class="leader-info"><strong>${escapeHTML(post.leader)}</strong><small>따뜻한 한 끼를 함께해요</small></div></div>
       <div class="reputation-row"><div><strong><span class="star">★</span> ${post.rating}</strong>평점</div><div><strong>${post.trades}회</strong>거래 횟수</div><div><strong>100%</strong>매너 온도</div></div>
       <div class="detail-block"><h3>최소주문까지</h3><p style="color:#e68b5d;font-weight:700;font-size:15px">${won(Math.max(post.minimum - post.amount, 0))} 남았어요</p></div>
       ${isOwner
-        ? `<button class="primary-button" style="width:100%;margin-top:17px" data-page="applicants">신청자 관리</button><button class="danger-button" style="width:100%;margin-top:9px" data-action="delete-post">모집글 삭제</button><div class="join-note">내가 만든 모집글이에요. 신청할 수 없습니다.</div>`
-        : `<button class="primary-button" style="width:100%;margin-top:17px" data-action="apply" ${full || applicationStatus === "approved" || applicationStatus === "rejected" ? "disabled" : ""}>${applicationStatus === "pending" ? "신청 취소하기" : applicationStatus === "approved" ? "신청 승인됨" : applicationStatus === "rejected" ? "신청 거절됨" : !authState.user ? "로그인 후 신청" : full ? "모집 인원 마감" : "동참 신청하기"} <span>→</span></button>
-      <div class="join-note">${applicationStatus === "pending" ? "리더의 승인을 기다리고 있어요." : applicationStatus === "approved" ? "모집자가 참여 신청을 승인했어요." : applicationStatus === "rejected" ? "이번 모집글 신청이 거절되었어요." : full ? "모집 인원이 모두 찼어요." : !authState.user ? "신청하려면 로그인해 주세요." : "신청 후 리더의 승인을 기다려요."}</div>`}
+        ? `<button class="primary-button" style="width:100%;margin-top:17px" data-page="applicants">신청자 관리</button>${post.paymentsStartedAt ? `<div class="join-note">입금이 시작된 모집글은 삭제할 수 없어요.</div>` : `<button class="danger-button" style="width:100%;margin-top:9px" data-action="delete-post">모집글 삭제</button>`}<div class="join-note">내가 만든 모집글이에요. 신청할 수 없습니다.</div>`
+        : `<button class="primary-button" style="width:100%;margin-top:17px" data-action="apply" ${applicationStatus === "pending" ? "" : full || expired || applicationStatus === "approved" || applicationStatus === "rejected" ? "disabled" : ""}>${applicationStatus === "pending" ? "신청 취소하기" : applicationStatus === "approved" ? "신청 승인됨" : applicationStatus === "rejected" ? "신청 거절됨" : !authState.user ? "로그인 후 신청" : expired ? "모집 마감" : full ? "모집 인원 마감" : "동참 신청하기"} <span>→</span></button>
+      <div class="join-note">${applicationStatus === "pending" ? "리더의 승인을 기다리고 있어요." : applicationStatus === "approved" ? "모집자가 참여 신청을 승인했어요." : applicationStatus === "rejected" ? "이번 모집글 신청이 거절되었어요." : expired ? "모집 마감 시간이 지났어요." : full ? "모집 인원이 모두 찼어요." : !authState.user ? "신청하려면 로그인해 주세요." : "신청 후 리더의 승인을 기다려요."}</div>`}
     </aside></div>`;
 }
 
@@ -315,7 +455,7 @@ function createPage() {
         <div class="form-field full"><label>메뉴와 수량 *</label><div id="menuSelection" class="menu-selection"><p class="subheading">먼저 음식점을 선택해 주세요.</p></div></div>
         <div class="form-field full"><label>주문 금액</label><div id="orderSummary" class="order-summary"><span>음식점을 선택하면 최소주문금액을 확인할 수 있어요.</span></div></div>
         <div class="form-field"><label for="members">모집 인원 *</label><select id="members" name="members"><option>2명</option><option selected>3명</option><option>4명</option><option>5명</option></select></div>
-        <div class="form-field"><label for="deadline">모집 마감 시간 *</label><select id="deadline" name="deadline"><option>15분 후</option><option>30분 후</option><option>1시간 후</option><option>직접 설정</option></select></div>
+        <div class="form-field"><label for="deadline">모집 마감 시간 *</label><select id="deadline" name="deadline"><option value="15">15분 후</option><option value="30">30분 후</option><option value="60">1시간 후</option><option value="custom">직접 설정</option></select><input id="customDeadline" name="customDeadline" type="datetime-local" aria-label="모집 마감 날짜와 시간" hidden /></div>
         <div class="form-field"><label for="deliveryTime">희망 배달 시간</label><input id="deliveryTime" name="deliveryTime" type="time" /></div>
         <div class="form-field full"><label for="note">기타 전달사항</label><textarea id="note" name="note" placeholder="메뉴나 만남 장소에 관한 내용을 적어주세요."></textarea></div>
       </div><div class="form-actions"><button type="button" class="secondary-button" data-page="discover">취소</button><button class="primary-button" type="submit">모집글 올리기 →</button></div></form>
@@ -328,35 +468,60 @@ function applicantsPage() {
     ${myPosts.length
       ? `<section class="owned-post-list">${myPosts.map((post) => {
         const postApplications = applications.filter((application) => application.post_id === post.id);
-        return `<article class="page-card owned-post-card"><div class="section-title"><h2>${escapeHTML(post.restaurant)}</h2><span class="tag">${escapeHTML(post.category)}</span></div><p class="subheading">${escapeHTML(post.deadline)} · 참여 ${post.joined} / ${post.max}명</p>
+        return `<article class="page-card owned-post-card"><div class="section-title"><h2>${escapeHTML(post.restaurant)}</h2><span class="tag">${escapeHTML(post.category)}</span></div><p class="subheading">${escapeHTML(post.deadline)} · <span data-deadline-at="${escapeHTML(post.deadlineAt || "")}">${remainingTime(post.deadlineAt)}</span> · 참여 ${post.joined} / ${post.max}명</p>
           ${postApplications.length
             ? postApplications.map((application) => `<div class="applicant-row"><span class="avatar">${escapeHTML(application.applicant_name.slice(0, 1))}</span><div class="applicant-copy"><strong>${escapeHTML(application.applicant_name)}</strong><small>${application.status === "pending" ? "참여 신청을 보냈어요." : application.status === "approved" ? "신청을 승인했어요." : "신청을 거절했어요."}</small></div><div class="applicant-actions">${application.status === "pending" ? `<button class="primary-button" data-action="review-application" data-application-id="${application.id}" data-decision="approved">승인</button><button class="secondary-button" data-action="review-application" data-application-id="${application.id}" data-decision="rejected">거절</button>` : `<span class="status-pill ${application.status === "approved" ? "status-paid" : "status-pending"}">${application.status === "approved" ? "승인됨" : "거절됨"}</span>`}</div></div>`).join("")
             : `<p class="subheading">아직 신청한 사람이 없어요.</p>`}
-          <div class="owned-post-actions"><button class="secondary-button" data-action="manage-owned-post" data-post-id="${post.id}">모집글 확인</button><button class="danger-button" data-action="delete-post" data-post-id="${post.id}">삭제</button></div></article>`;
+          <div class="owned-post-actions"><button class="secondary-button" data-action="manage-owned-post" data-post-id="${post.id}">모집글 확인</button>${post.paymentsStartedAt ? `<span class="join-note">입금 중 · 삭제 불가</span>` : `<button class="danger-button" data-action="delete-post" data-post-id="${post.id}">삭제</button>`}</div></article>`;
       }).join("")}</section>`
       : `<section class="page-card"><div class="empty-state">아직 등록한 모집글이 없어요.<br />모집글을 만들면 이곳에서 신청자를 확인할 수 있어요.<br /><button class="primary-button" style="margin-top:16px" data-page="create">모집글 만들기</button></div></section>`}`;
 }
 
 async function refreshVirtualAccounts() {
-  if (currentPage !== "payment") return;
+  if (!["chat", "payment", "delivery"].includes(currentPage)) return;
+  const post = getActiveGroupPost();
+  const session = (await authState.client?.auth.getSession())?.data.session;
+  if (!post || !session) {
+    virtualAccounts.clear();
+    paymentGroup = null;
+    paymentGroupId = null;
+    virtualAccountError = "";
+    render();
+    return;
+  }
+  if (paymentGroupId !== post.id) {
+    virtualAccounts.clear();
+    paid.clear();
+    paymentGroup = null;
+    paymentGroupId = post.id;
+  }
   try {
-    const response = await fetch(`/api/virtual-accounts?groupId=${encodeURIComponent(demoGroupId)}`, { cache: "no-store" });
+    const response = await fetch(`/api/virtual-accounts?groupId=${encodeURIComponent(post.id)}`, {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${session.access_token}` }
+    });
     const result = await readApiResponse(response, "입금 상태를 불러오지 못했어요.");
     virtualAccounts.clear();
     for (const account of result.accounts) virtualAccounts.set(account.participantId, account);
     paymentGroup = result.group;
     paid = new Set(result.accounts.filter((account) => account.status === "PAID").map((account) => account.participantId));
     virtualAccountError = "";
-    if (currentPage === "payment") render();
+    if (["chat", "payment", "delivery"].includes(currentPage)) render();
   } catch (error) {
     virtualAccountError = error.message.includes("Failed to fetch")
       ? "Vercel 배포에서 API를 사용하고 Toss·Upstash 환경 변수를 설정해 주세요."
       : error.message;
-    if (currentPage === "payment") render();
+    if (["chat", "payment", "delivery"].includes(currentPage)) render();
   }
 }
 
 async function showParticipantAccount(participantId) {
+  const post = getActiveGroupPost();
+  const session = (await authState.client?.auth.getSession())?.data.session;
+  if (!post || !session || participantId !== authState.user?.id) {
+    showToast("본인의 로그인된 참여자 계좌만 발급할 수 있어요.");
+    return;
+  }
   let checkoutOrderId = "";
   const existing = virtualAccounts.get(participantId);
   if (existing?.status === "REQUESTING" && Date.now() - Date.parse(existing.createdAt) < 10 * 60_000) {
@@ -370,8 +535,11 @@ async function showParticipantAccount(participantId) {
   }
   try {
     let response;
-    if (existing && existing.status !== "NOT_ISSUED") {
-      response = await fetch(`/api/virtual-accounts?groupId=${encodeURIComponent(demoGroupId)}&participantId=${encodeURIComponent(participantId)}`, { cache: "no-store" });
+    if (existing && !["NOT_ISSUED", "FAILED", "EXPIRED", "CANCELED"].includes(existing.status)) {
+      response = await fetch(`/api/virtual-accounts?groupId=${encodeURIComponent(post.id)}&participantId=${encodeURIComponent(participantId)}`, {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
       const result = await readApiResponse(response, "가상계좌 정보를 불러오지 못했어요.");
       const account = result.accounts?.find((entry) => entry.participantId === participantId);
       if (!account) throw new Error("참여자 계좌를 찾을 수 없어요.");
@@ -382,17 +550,14 @@ async function showParticipantAccount(participantId) {
       const accountNumber = account.accountNumber
         ? `<div class="issued-account-number">${escapeHTML(account.accountNumber)}</div><button class="secondary-button" data-action="copy-issued-account" data-account="${escapeHTML(account.accountNumber)}">계좌번호 복사</button>`
         : "<p>입금 확인을 기다리고 있어요.</p>";
-      const accountOwner = participantName(participantId);
+      const accountOwner = groupParticipants(post).find((person) => person.id === participantId)?.name || currentUserName();
       openModal(`<div class="eyebrow">TOSS TEST VIRTUAL ACCOUNT</div><h2 id="modalTitle">${escapeHTML(accountOwner)}님의 가상계좌</h2><p>아래 계좌는 이 참여자의 분담액 전용입니다. 정확한 금액으로 입금해 주세요.</p><div class="issued-account-card"><strong>${escapeHTML(bankName)}</strong>${accountNumber}<span>입금 금액 <b>${won(account.amount)}</b></span><span>입금 상태 <b>${account.status === "PAID" ? "입금 완료" : "입금 대기"}</b></span><span>입금 기한 <b>${escapeHTML(account.dueDate || "토스페이먼츠 안내 시간")}</b></span></div><button class="primary-button" id="modalDone">확인</button>`);
       return;
     } else {
       response = await fetch("/api/virtual-accounts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          groupId: demoGroupId,
-          participantId
-        })
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ groupId: post.id, participantId })
       });
     }
     const result = await readApiResponse(response, "가상계좌를 처리하지 못했어요.");
@@ -423,8 +588,8 @@ async function showParticipantAccount(participantId) {
     if (checkoutOrderId) {
       fetch("/api/virtual-accounts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "abandon", groupId: demoGroupId, participantId, orderId: checkoutOrderId })
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ action: "abandon", groupId: post.id, participantId, orderId: checkoutOrderId })
       });
       virtualAccounts.set(participantId, { participantId, participantName: participantId, status: "FAILED" });
     }
@@ -434,27 +599,45 @@ async function showParticipantAccount(participantId) {
 }
 
 function chatPage() {
-  const name = currentUserName();
-  const menu = [{ name: "숯불양념치킨", by: "민지", price: 18000, quantity: 1 }, { name: "치즈볼", by: "유진", price: 5000, quantity: 1 }, { name: "콜라", by: name, price: 2000, quantity: 1 }, ...customMenu];
-  return `<div class="page-heading"><div><div class="eyebrow">GROUP ROOM · 3명 참여 중</div><h1>꼬꼬아찌 같이 시켜요 🍗</h1><p class="subheading">연남동 · 오늘 오후 7:30 배달 예정</p></div><button class="secondary-button" data-page="payment">입금 현황 →</button></div>
-    <div class="chat-layout"><section class="chat-panel"><div class="chat-header"><div><strong>🍗 꼬꼬아찌 숯불치킨</strong><small>민지, 유진, ${escapeHTML(name)} · 3명</small></div><div class="online-dots">${["민지", "유진", name].map((person) => avatar(person)).join("")}</div></div><div class="chat-status">● 메뉴 결정 중 <span style="color:#a1aaa4">　→　입금 대기　→　결제 완료　→　배달 중</span></div>
-      <div class="chat-messages" id="chatMessages"><div class="chat-message">${avatar("민지")}<div><div class="bubble">안녕하세요! 숯불양념치킨으로 주문하려고 해요 🍗</div><span class="message-time">오후 7:12</span></div></div><div class="chat-message">${avatar("유진")}<div><div class="bubble">좋아요! 치즈볼도 하나 추가할게요 🙌</div><span class="message-time">오후 7:14</span></div></div><div class="chat-message mine">${avatar(name)}<div><div class="bubble">저는 콜라 추가할게요. 메뉴 확정해도 좋을 것 같아요!</div><span class="message-time">오후 7:15</span></div></div></div>
-      <form id="chatForm" class="chat-input"><input name="message" required placeholder="메시지를 입력해 주세요..." /><button aria-label="메시지 보내기">↑</button></form>
-    </section><aside><section class="page-card">    <div class="section-title"><h2>현재 주문 내역</h2><button class="text-button" data-action="add-menu">＋ 메뉴 추가</button></div><div class="menu-order">${menu.map((item) => `<div class="order-line"><span>${escapeHTML(item.by)} · ${item.name}${item.quantity > 1 ? ` × ${item.quantity}` : ""}</span><strong>${won(item.price * item.quantity)}</strong></div>`).join("")}<div class="order-total"><span>총 주문금액</span><strong>${won(menu.reduce((total, item) => total + item.price * item.quantity, 0))}</strong></div></div><button class="primary-button" style="width:100%;margin-top:15px" data-action="confirm-order">주문 내용 확정하기</button></section>
-      <section class="page-card" style="margin-top:13px"><div class="section-title"><h2>참여자</h2></div>${["민지", "유진", "서연"].map((person) => { const isMe = person === "서연"; const label = participantName(person); return `<div class="participant-row">${avatar(label)}<div class="participant-copy"><strong>${escapeHTML(label)}${isMe ? " (나)" : ""}</strong><small>${person === "민지" ? "리더" : "참여자"}</small></div><span class="status-pill ${isMe ? "status-paid" : "status-pending"}">${isMe ? "메뉴 선택" : "참여 중"}</span></div>`; }).join("")}</section></aside></div>`;
+  const post = getActiveGroupPost();
+  if (!post) return groupPageEmptyState("공동 채팅방", "채팅에 참여하려면 모집글을 만들거나 참여 신청이 승인되어야 해요.");
+  const people = groupParticipants(post);
+  const lines = groupOrderLines(post);
+  const userApplication = applications.find((item) => item.post_id === post.id && item.applicant_id === authState.user?.id && item.status === "approved");
+  const allMenusChosen = Boolean(post.selectedMenu?.length) && people.filter((person) => person.application)
+    .every((person) => menuSelections.some((selection) => selection.application_id === person.application.id));
+  const menuLines = lines.length
+    ? lines.map((item) => `<div class="order-line"><span>${escapeHTML(item.by)} · ${escapeHTML(item.name)}${item.quantity > 1 ? ` × ${item.quantity}` : ""}</span><strong>${won(item.price * item.quantity)}</strong></div>`).join("")
+    : `<p class="subheading">리더와 참가자가 메뉴를 선택하면 주문 내역에 표시돼요.</p>`;
+  return `<div class="page-heading"><div><div class="eyebrow">GROUP ROOM · ${people.length}명 참여 중</div><h1>${escapeHTML(post.restaurant)} 공동 주문</h1><p class="subheading">모집 마감 <span data-deadline-at="${escapeHTML(post.deadlineAt || "")}">${remainingTime(post.deadlineAt)}</span></p></div><button class="secondary-button" data-page="payment">입금 현황 →</button></div>
+    <div class="chat-layout"><section class="chat-panel"><div class="chat-header"><div><strong>${escapeHTML(post.emoji)} ${escapeHTML(post.restaurant)}</strong><small>${people.map((person) => escapeHTML(person.name)).join(", ")}</small></div><div class="online-dots">${people.map((person) => avatar(person.name)).join("")}</div></div>
+      <div class="chat-status">● ${allMenusChosen ? "메뉴 결정 완료" : "메뉴 결정 중"} <span style="color:#a1aaa4">　→　입금 ${paymentGroup?.status === "ORDER_READY" ? "완료" : "대기"}</span></div>
+      <div class="chat-messages" id="chatMessages">${chatMessages.length ? chatMessages.map((message) => `<div class="chat-message ${message.sender_id === authState.user?.id ? "mine" : ""}">${avatar(message.sender_name)}<div><div class="bubble">${escapeHTML(message.body)}</div><span class="message-time">${new Date(message.created_at).toLocaleString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</span></div></div>`).join("") : `<div class="empty-state">아직 채팅이 없어요. 첫 메시지를 보내 보세요.</div>`}</div>
+      ${userApplication || isPostOwner(post) ? `<form id="chatForm" class="chat-input"><input name="message" maxlength="1000" required placeholder="메시지를 입력해 주세요..." /><button aria-label="메시지 보내기">↑</button></form>` : `<p class="join-note">승인된 참가자만 채팅을 보낼 수 있어요.</p>`}
+    </section><aside><section class="page-card"><div class="section-title"><h2>현재 주문 내역</h2></div><div class="menu-order">${menuLines}<div class="order-total"><span>총 주문금액</span><strong>${won(lines.reduce((total, item) => total + item.price * item.quantity, 0))}</strong></div></div>
+      ${userApplication && !menuSelections.some((selection) => selection.application_id === userApplication.id) ? `<button class="secondary-button" style="width:100%;margin-top:15px" data-action="open-own-menu">내 메뉴 선택하기</button>` : ""}
+      <button class="primary-button" style="width:100%;margin-top:15px" data-page="payment" ${!allMenusChosen ? "disabled" : ""}>입금 현황 보기</button></section>
+      <section class="page-card" style="margin-top:13px"><div class="section-title"><h2>참여자</h2></div>${people.map((person) => {
+        const selection = menuSelections.find((item) => item.applicant_id === person.id && item.post_id === post.id);
+        return `<div class="participant-row">${avatar(person.name)}<div class="participant-copy"><strong>${escapeHTML(person.name)}${person.id === authState.user?.id ? " (나)" : ""}</strong><small>${person.role}</small></div><span class="status-pill ${selection || (!person.application && post.selectedMenu?.length) ? "status-paid" : "status-pending"}">${selection || (!person.application && post.selectedMenu?.length) ? "메뉴 선택" : "메뉴 대기"}</span></div>`;
+      }).join("")}</section></aside></div>`;
 }
 
 function paymentPage() {
-  const people = paymentParticipants;
+  const post = getActiveGroupPost();
+  if (!post) return groupPageEmptyState("입금 현황", "입금 내역을 보려면 모집글을 만들거나 참여 신청이 승인되어야 해요.");
+  const people = groupParticipants(post);
   const total = people.reduce((sum, person) => sum + person.amount, 0);
-  const paidTotal = people.filter((person) => paid.has(person.name)).reduce((sum, person) => sum + person.amount, 0);
-  const allPaid = people.every((person) => paid.has(person.name));
-  return `<div class="page-heading"><div><div class="eyebrow">PARTICIPANT VIRTUAL ACCOUNTS</div><h1>함께 입금하기</h1><p class="subheading">참여자마다 분담액이 지정된 가상계좌를 따로 발급해요.</p></div><button class="secondary-button" data-page="chat">← 채팅방</button></div>
-    <div class="detail-layout"><section class="page-card"><div class="payment-total"><small>총 결제 예정 금액</small><strong>${won(total)}</strong></div><div class="section-title" style="margin-top:22px"><h2>입금 현황</h2><span class="subheading">${people.filter((person) => paid.has(person.name)).length} / ${people.length}명 완료</span></div>
-      ${people.map((person) => {
-        const account = virtualAccounts.get(person.name);
+  const paidTotal = people.filter((person) => virtualAccounts.get(person.id)?.status === "PAID").reduce((sum, person) => sum + person.amount, 0);
+  const paidCount = people.filter((person) => virtualAccounts.get(person.id)?.status === "PAID").length;
+  const allPaid = people.length > 0 && paidCount === people.length;
+  const menusReady = people.every((person) => person.amount > 0);
+  const groupOpen = !paymentGroup || paymentGroup.status === "COLLECTING";
+  return `<div class="page-heading"><div><div class="eyebrow">PARTICIPANT VIRTUAL ACCOUNTS</div><h1>함께 입금하기</h1><p class="subheading">${escapeHTML(post.restaurant)} · 각자 선택한 메뉴 금액을 부담해요.</p></div><button class="secondary-button" data-page="chat">← 채팅방</button></div>
+    <div class="detail-layout"><section class="page-card"><div class="payment-total"><small>총 결제 예정 금액</small><strong>${won(total)}</strong></div><div class="section-title" style="margin-top:22px"><h2>입금 현황</h2><span class="subheading">${paidCount} / ${people.length}명 완료</span></div>
+      ${!menusReady ? `<div class="account-info-box"><strong>메뉴 선택을 기다리고 있어요</strong><span>리더와 승인된 참가자가 메뉴를 선택하면 각자의 분담 금액이 표시됩니다.</span></div>` : people.map((person) => {
+        const account = virtualAccounts.get(person.id);
         const status = account?.status || "NOT_ISSUED";
-        const displayName = participantName(person.name);
         const paidStatus = status === "PAID";
         const statusLabel = paidStatus ? "입금 완료"
           : status === "REFUND_REQUESTED" ? "환불 처리 중"
@@ -464,31 +647,76 @@ function paymentPage() {
                   : status === "WAITING_FOR_DEPOSIT" ? "입금 대기"
                     : status === "REQUESTING" ? "발급 처리 중" : "계좌 미발급";
         const canIssue = status === "NOT_ISSUED" || status === "FAILED" || status === "EXPIRED" || status === "CANCELED";
-        const groupOpen = !paymentGroup || paymentGroup.status === "COLLECTING";
-        const actionLabel = canIssue ? "계좌 발급" : status === "REQUESTING" ? "발급 진행 중" : "계좌 확인";
-        const showAction = canIssue && groupOpen;
-        return `<div class="participant-row payment-participant">${avatar(displayName)}<div class="participant-copy"><strong>${escapeHTML(displayName)}${person.name === "서연" ? " (나)" : ""}</strong><small>${person.name === "민지" ? "리더" : "참여자"} · ${won(person.amount)}</small></div><span class="status-pill ${paidStatus ? "status-paid" : status === "REFUND_ACTION_REQUIRED" ? "status-pending" : "status-pending"}">${statusLabel}</span>${showAction ? `<button class="secondary-button account-action" data-action="participant-account" data-participant="${person.name}" ${status === "REQUESTING" ? "disabled" : ""}>${actionLabel}</button>` : ""}</div>`;
+        const isMe = person.id === authState.user?.id;
+        const showAction = isMe && canIssue && groupOpen;
+        const actionLabel = canIssue ? "계좌 발급" : "계좌 확인";
+        return `<div class="participant-row payment-participant">${avatar(person.name)}<div class="participant-copy"><strong>${escapeHTML(person.name)}${isMe ? " (나)" : ""}</strong><small>${person.role} · ${won(person.amount)}</small></div><span class="status-pill ${paidStatus ? "status-paid" : "status-pending"}">${statusLabel}</span>${showAction ? `<button class="secondary-button account-action" data-action="participant-account" data-participant="${person.id}">${actionLabel}</button>` : isMe && !canIssue && status !== "REQUESTING" ? `<button class="secondary-button account-action" data-action="participant-account" data-participant="${person.id}">계좌 확인</button>` : ""}</div>`;
       }).join("")}
-      <div class="progress-track"><div class="progress-fill" style="width:${Math.round((paidTotal / total) * 100)}%"></div></div><div class="progress-caption"><span>입금 완료 금액 ${won(paidTotal)}</span><span>${Math.round((paidTotal / total) * 100)}%</span></div>
-    </section><aside class="page-card"><div class="section-title"><h2>참여자별 가상계좌</h2><span class="tag">Toss 테스트</span></div><p class="subheading">결제창에서 은행을 선택하면 각 계좌에 해당 참여자의 분담액만 입금할 수 있어요.</p>
-      <div class="account-info-box">${virtualAccountError ? `<strong>연동 설정이 필요해요</strong><span>${escapeHTML(virtualAccountError)}</span>` : paymentGroup?.status === "COLLECTING" ? `<strong>입금 마감 ${new Date(paymentGroup.deadlineAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</strong><span>마감까지 전원이 입금하지 않으면 공동배달은 자동 취소됩니다. 입금 완료자의 환불 계좌가 확인되면 환불을 요청해요.</span>` : paymentGroup?.status === "ORDER_READY" ? "<strong>모든 참여자의 입금이 완료됐어요</strong><span>공동배달 주문을 진행할 수 있습니다.</span>" : paymentGroup?.status === "CANCELLING" ? "<strong>공동배달 취소 처리 중</strong><span>미입금 계좌를 취소하고 입금된 금액의 환불을 요청하고 있어요.</span>" : paymentGroup?.status === "REFUND_ACTION_REQUIRED" ? "<strong>환불 계좌 확인이 필요해요</strong><span>입금자의 환불 계좌 정보가 없어 자동 환불을 진행하지 못했습니다. 토스 결제내역에서 해당 결제를 확인해 주세요.</span>" : paymentGroup?.status === "REFUNDING" ? "<strong>공동배달이 취소됐어요</strong><span>입금 완료 금액의 환불을 요청했습니다. 은행 처리에는 영업일 기준 시간이 걸릴 수 있어요.</span>" : paymentGroup?.status === "CANCELED" ? "<strong>공동배달이 취소됐어요</strong><span>입금 마감까지 전원이 입금하지 않아 미입금 계좌를 취소했어요.</span>" : "<strong>입금 상태 자동 확인</strong><span>첫 참여자가 계좌 발급을 시작하면 1시간 입금 마감이 시작돼요.</span>"}</div>
-      <div class="account-info-box refund-notice"><strong>환불 계좌 안내</strong><span>자동 환불을 위해 Toss 결제창에서 환불 계좌 입력이 필요해요. 토스 상점 설정에서 가상계좌 환불 정보 입력을 켜야 합니다. 계좌 정보가 없으면 자동 환불 대신 확인이 필요해요.</span></div>
-      <div class="detail-block"><h3>분담액 예시</h3><p>리더 15,000원 · ${escapeHTML(currentUserName())} 9,000원 · 유진 8,000원<br />각 참여자는 자신의 가상계좌에 표시된 금액을 입금해요.</p></div>
-      <div class="join-note">${allPaid ? "모든 금액이 입금되었습니다. 배달 주문을 진행합니다." : "모든 참여자의 입금이 확인되면 주문을 진행해요."}</div>
+      <div class="progress-track"><div class="progress-fill" style="width:${total ? Math.round((paidTotal / total) * 100) : 0}%"></div></div><div class="progress-caption"><span>입금 완료 금액 ${won(paidTotal)}</span><span>${total ? Math.round((paidTotal / total) * 100) : 0}%</span></div>
+    </section><aside class="page-card"><div class="section-title"><h2>참여자별 가상계좌</h2><span class="tag">Toss 테스트</span></div><p class="subheading">본인 계좌만 발급·확인할 수 있으며, 실제 입금은 Toss 테스트 계좌에서 진행됩니다.</p>
+      <div class="account-info-box">${virtualAccountError ? `<strong>연동 설정이 필요해요</strong><span>${escapeHTML(virtualAccountError)}</span>` : paymentGroup?.status === "COLLECTING" ? `<strong>입금 마감 ${new Date(paymentGroup.deadlineAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</strong><span>마감까지 전원이 입금하지 않으면 공동배달은 자동 취소됩니다.</span>` : paymentGroup?.status === "ORDER_READY" ? "<strong>모든 참여자의 입금이 완료됐어요</strong><span>배달 플랫폼 주문·배송 정보는 별도 연동이 필요합니다.</span>" : paymentGroup?.status === "CANCELLING" ? "<strong>공동배달 취소 처리 중</strong><span>미입금 계좌를 취소하고 입금된 금액의 환불을 요청하고 있어요.</span>" : paymentGroup?.status === "REFUND_ACTION_REQUIRED" ? "<strong>환불 계좌 확인이 필요해요</strong><span>토스 결제내역에서 입금 결제의 환불 정보를 확인해 주세요.</span>" : paymentGroup?.status === "REFUNDING" ? "<strong>공동배달이 취소됐어요</strong><span>환불을 요청했습니다. 은행 처리에는 영업일 기준 시간이 걸릴 수 있어요.</span>" : paymentGroup?.status === "CANCELED" ? "<strong>공동배달이 취소됐어요</strong><span>입금 마감까지 전원이 입금하지 않아 미입금 계좌를 취소했어요.</span>" : menusReady ? "<strong>개인별 메뉴 금액을 확인해 주세요</strong><span>첫 참여자가 계좌 발급을 시작하면 1시간 입금 마감이 시작됩니다.</span>" : "<strong>메뉴 선택 대기 중</strong><span>모든 참여자가 메뉴를 선택한 후 계좌를 발급할 수 있습니다.</span>"}</div>
+      <div class="account-info-box refund-notice"><strong>환불 계좌 안내</strong><span>자동 환불을 위해 Toss 결제창에서 환불 계좌 입력을 지원하도록 설정해야 합니다.</span></div>
     </aside></div>`;
 }
 
 function deliveryPage() {
-  const name = currentUserName();
-  const steps = ["모집 완료", "메뉴 결정", "입금 대기", "결제 완료", "배달 중", "수령 확인"];
-  return `<div class="page-heading"><div><div class="eyebrow">ORDER TRACKING</div><h1>공동배달 진행 상황</h1><p class="subheading">함께하는 주문의 모든 순간을 확인해요.</p></div><button class="secondary-button" data-page="chat">채팅방에서 조율하기</button></div>
-    <section class="page-card"><div class="section-title"><h2>꼬꼬아찌 숯불치킨</h2><span class="status-pill status-paid">배달 중</span></div><p class="subheading">주문번호 #MM-0928-03 · 오늘 오후 7:18 주문 완료</p>
-      <div class="timeline">${steps.map((step, i) => `<div class="timeline-step ${i < 4 ? "done" : i === 4 ? "current" : ""}"><div class="step-dot">${i < 4 ? "✓" : i + 1}</div>${step}</div>`).join("")}</div>
-      <div class="delivery-summary"><div class="summary-tile"><small>예상 도착 시간</small><strong>오후 7:48 ~ 8:00</strong></div><div class="summary-tile"><small>주문 금액</small><strong>32,000원 · 결제 완료</strong></div><div class="summary-tile"><small>만남 장소</small><strong>연남동 주민센터 앞</strong></div><div class="summary-tile"><small>음식 수령 확인</small><strong>${received.size} / 3명</strong></div></div>
-    </section>    <div class="detail-layout" style="margin-top:15px"><section class="page-card"><div class="section-title"><h2>음식 수령 확인</h2><span class="subheading">${received.size} / 3명</span></div><p class="subheading">음식을 전달받은 뒤 수령 완료를 눌러주세요. 모두 확인하면 거래가 완료돼요.</p>${["민지", "서연", "유진"].map((person) => { const isMe = person === "서연"; const label = participantName(person); return `<div class="participant-row">${avatar(label)}<div class="participant-copy"><strong>${escapeHTML(label)}${isMe ? " (나)" : ""}</strong><small>${person === "민지" ? "리더" : "참여자"}</small></div><span class="status-pill ${received.has(person) ? "status-paid" : "status-pending"}">${received.has(person) ? "수령 확인" : "대기 중"}</span></div>`; }).join("")}
-      <button class="primary-button" style="width:100%;margin-top:13px" data-action="received">${received.has("서연") ? "수령 완료 ✓" : "수령 완료하기"}</button></section>
-      <aside class="page-card"><div class="section-title"><h2>주문 정보</h2></div><div class="detail-block"><h3>주문 상태</h3><p>음식이 조리 완료되어 배달 중이에요. 채팅방에서 만남 장소와 수령 시간을 조율할 수 있어요.</p></div><button class="secondary-button" style="width:100%;margin-top:17px" data-page="chat">공동 채팅방 열기</button></aside>
-    </div>${received.size === 3 ? `<section class="page-card" style="margin-top:15px;text-align:center"><h2 style="font-size:16px">모든 참여자가 음식 수령을 확인했어요!</h2><p class="subheading">함께한 이웃과 즐거운 식사였나요?</p><button class="primary-button" data-action="review">서로 평가하기 →</button></section>` : ""}`;
+  const post = getActiveGroupPost();
+  if (!post) return groupPageEmptyState("진행 상황", "진행 상황을 보려면 모집글을 만들거나 참여 신청이 승인되어야 해요.");
+  const people = groupParticipants(post);
+  const menusReady = Boolean(post.selectedMenu?.length) && people.filter((person) => person.application)
+    .every((person) => menuSelections.some((selection) => selection.application_id === person.application.id));
+  const allPaid = paymentGroup?.status === "ORDER_READY";
+  const receiptCount = receiptConfirmations.length;
+  const progressMessage = allPaid
+    ? "모든 참여자의 입금이 완료됐어요."
+    : paymentGroup?.status === "COLLECTING"
+      ? "참여자별 Toss 가상계좌 입금을 기다리고 있어요."
+      : paymentGroup?.status === "PREPARING"
+        ? "공동 입금을 준비하고 있어요."
+        : paymentGroup?.status === "CANCELLING"
+          ? "미입금 계좌 취소와 환불을 처리하고 있어요."
+          : paymentGroup?.status === "REFUND_ACTION_REQUIRED"
+            ? "환불 계좌 확인이 필요해요. Toss 결제 내역을 확인해 주세요."
+            : paymentGroup?.status === "REFUNDING"
+              ? "공동 주문이 취소됐고 환불을 처리하고 있어요."
+              : paymentGroup?.status === "CANCELED"
+                ? "공동 주문 결제가 취소됐어요."
+                : menusReady
+                  ? "참가자 메뉴 선택 완료 후 입금을 진행할 수 있어요."
+                  : "참가자 메뉴 선택을 기다리고 있어요.";
+  const progressDescription = allPaid
+    ? "배달 상태를 임의로 추정하지 않습니다. 실제 수령 후 아래에서 확인해 주세요."
+    : "모집글, 참가자 메뉴 선택, Toss 가상계좌 입금 상태를 연결해 표시합니다.";
+  const currentUserReceived = receiptConfirmations.some((receipt) => receipt.user_id === authState.user?.id);
+  const receiptAction = currentUserReceived
+    ? `<p class="join-note">수령을 확인했어요.</p>`
+    : allPaid
+      ? `<button class="primary-button" style="width:100%;margin-top:13px" data-action="received">수령 완료하기</button>`
+      : `<p class="join-note">모든 참여자의 입금이 완료된 뒤 수령을 확인할 수 있어요.</p>`;
+  const steps = ["모집 마감", "메뉴 선택 완료", "입금 시작", "입금 완료", "배달 정보", "수령 확인"];
+  const completed = [
+    people.length >= post.max || Date.parse(post.deadlineAt || "") <= Date.now(),
+    menusReady,
+    Boolean(paymentGroup),
+    allPaid,
+    false,
+    people.length > 0 && receiptCount === people.length
+  ];
+  const activeIndex = completed.findIndex((done) => !done);
+  return `<div class="page-heading"><div><div class="eyebrow">ORDER TRACKING</div><h1>공동배달 진행 상황</h1><p class="subheading">${escapeHTML(post.restaurant)} · <span data-deadline-at="${escapeHTML(post.deadlineAt || "")}">${remainingTime(post.deadlineAt)}</span></p></div><button class="secondary-button" data-page="chat">채팅방에서 조율하기</button></div>
+    <section class="page-card"><div class="section-title"><h2>주문 단계</h2><span class="status-pill ${allPaid ? "status-paid" : "status-pending"}">${allPaid ? "입금 완료" : "진행 중"}</span></div>
+      <div class="timeline">${steps.map((step, index) => `<div class="timeline-step ${completed[index] ? "done" : index === activeIndex ? "current" : ""}"><div class="step-dot">${completed[index] ? "✓" : index + 1}</div>${step}</div>`).join("")}</div>
+      <div class="delivery-summary"><div class="summary-tile"><small>모집 인원</small><strong>${post.joined} / ${post.max}명</strong></div><div class="summary-tile"><small>메뉴 합계</small><strong>${won(groupParticipants(post).reduce((sum, person) => sum + person.amount, 0))}</strong></div><div class="summary-tile"><small>입금 상태</small><strong>${allPaid ? "전원 입금 완료" : `${paid.size} / ${people.length}명 입금 완료`}</strong></div><div class="summary-tile"><small>수령 확인</small><strong>${receiptCount} / ${people.length}명</strong></div></div>
+      <div class="account-info-box"><strong>${escapeHTML(progressMessage)}</strong><span>${escapeHTML(progressDescription)}</span></div>
+    </section><div class="detail-layout" style="margin-top:15px"><section class="page-card"><div class="section-title"><h2>음식 수령 확인</h2><span class="subheading">${receiptCount} / ${people.length}명</span></div><p class="subheading">실제로 음식을 받은 뒤 수령 완료를 눌러주세요.</p>${people.map((person) => {
+      const receivedByPerson = receiptConfirmations.some((receipt) => receipt.user_id === person.id);
+      return `<div class="participant-row">${avatar(person.name)}<div class="participant-copy"><strong>${escapeHTML(person.name)}${person.id === authState.user?.id ? " (나)" : ""}</strong><small>${person.role}</small></div><span class="status-pill ${receivedByPerson ? "status-paid" : "status-pending"}">${receivedByPerson ? "수령 확인" : "대기 중"}</span></div>`;
+    }).join("")}${receiptAction}</section>
+    <aside class="page-card"><div class="section-title"><h2>현재 주문 내역</h2></div>${groupOrderLines(post).map((item) => `<div class="order-line"><span>${escapeHTML(item.by)} · ${escapeHTML(item.name)} × ${item.quantity}</span><strong>${won(item.price * item.quantity)}</strong></div>`).join("")}<button class="secondary-button" style="width:100%;margin-top:17px" data-page="payment">입금 현황 열기</button></aside></div>${receiptCount === people.length && people.length ? `<section class="page-card" style="margin-top:15px;text-align:center"><h2 style="font-size:16px">모든 참여자가 수령을 확인했어요!</h2><p class="subheading">함께한 이웃과 즐거운 식사였나요?</p><button class="primary-button" data-action="review">서로 평가하기 →</button></section>` : ""}`;
+}
+
+function groupPageEmptyState(title, message) {
+  return `<div class="page-heading"><div><div class="eyebrow">GROUP ORDER</div><h1>${escapeHTML(title)}</h1></div></div><section class="page-card"><div class="empty-state">${escapeHTML(message)}<br /><button class="primary-button" style="margin-top:16px" data-page="discover">모집글 찾기</button></div></section>`;
 }
 
 function profilePage() {
@@ -838,6 +1066,10 @@ async function deleteRecruitmentPost(postId = selectedPost?.id) {
     showToast("내가 작성한 모집글만 삭제할 수 있어요.");
     return;
   }
+  if (post.paymentsStartedAt) {
+    showToast("입금이 시작된 모집글은 삭제할 수 없어요.");
+    return;
+  }
   if (!window.confirm(`'${post.restaurant}' 모집글을 삭제할까요? 신청 내역도 함께 삭제되며 되돌릴 수 없습니다.`)) return;
 
   const { data, error } = await authState.client.rpc("delete_recruitment_post", {
@@ -859,6 +1091,65 @@ async function deleteRecruitmentPost(postId = selectedPost?.id) {
     showToast("모집글과 해당 신청 내역을 삭제했어요.");
   } catch (error) {
     showToast(`삭제했지만 목록을 새로고침하지 못했습니다: ${error.message}`);
+  }
+}
+
+async function submitGroupMessage(form) {
+  const post = getActiveGroupPost();
+  if (!authState.client || !authState.user || !post) {
+    showToast("채팅 메시지를 보내려면 로그인하고 모집글 참여 승인을 받아야 해요.");
+    return;
+  }
+  const body = String(new FormData(form).get("message") || "").trim();
+  if (!body) {
+    showToast("메시지를 입력해 주세요.");
+    return;
+  }
+  const { error } = await authState.client.from("recruitment_messages").insert({
+    post_id: post.id,
+    sender_id: authState.user.id,
+    sender_name: currentUserName(),
+    body
+  });
+  if (error) {
+    showToast(`메시지를 보내지 못했습니다: ${error.message}`);
+    return;
+  }
+  form.reset();
+  try {
+    await loadGroupData(post);
+    render();
+  } catch (error) {
+    showToast(`메시지는 보냈지만 새로고침하지 못했습니다: ${error.message}`);
+  }
+}
+
+async function confirmGroupReceipt() {
+  const post = getActiveGroupPost();
+  const person = groupParticipants(post).find((participant) => participant.id === authState.user?.id);
+  if (!authState.client || !authState.user || !post || !person) {
+    showToast("모집글 참여자만 수령 확인을 할 수 있어요.");
+    return;
+  }
+  if (paymentGroup?.status !== "ORDER_READY") {
+    showToast("모든 참가자의 입금이 확인된 뒤 실제 음식을 받으면 수령을 확인해 주세요.");
+    return;
+  }
+  const { error } = await authState.client.from("recruitment_receipts").insert({
+    post_id: post.id,
+    user_id: authState.user.id,
+    participant_name: currentUserName()
+  });
+  if (error) {
+    showToast(`수령 확인을 저장하지 못했습니다: ${error.message}`);
+    return;
+  }
+  try {
+    await loadGroupData(post);
+    render();
+    showToast("음식 수령을 확인했어요.");
+  } catch (error) {
+    showToast(`수령 확인은 저장했지만 새로고침하지 못했습니다: ${error.message}`);
   }
 }
 
@@ -913,6 +1204,10 @@ document.addEventListener("click", (event) => {
         showToast("내가 만든 모집글에는 동참 신청할 수 없어요.");
         break;
       }
+      if (selectedPost.deadlineAt && Date.parse(selectedPost.deadlineAt) <= Date.now()) {
+        showToast("모집 마감 시간이 지났어요.");
+        break;
+      }
       if (selectedPost.joined >= selectedPost.max) {
         showToast("모집 인원이 모두 찼어요.");
         break;
@@ -926,18 +1221,20 @@ document.addEventListener("click", (event) => {
       openModal(`<div class="eyebrow">NEIGHBOR PROFILE</div><h2>${escapeHTML(selectedPost.leader)}님의 프로필</h2><p>함께한 이웃의 평판과 거래 경험을 확인해 보세요.</p><div class="reputation-row"><div><strong><span class="star">★</span> ${selectedPost.rating}</strong>평점</div><div><strong>${selectedPost.trades}회</strong>거래</div><div><strong>100%</strong>매너</div></div><p>“약속 시간을 잘 지키고 따뜻한 이웃이에요!”</p><button class="primary-button" id="modalDone">확인</button>`);
       break;
     case "close-post": showToast("모집을 마감했어요. 이미 수락한 참여자와는 계속 진행할 수 있어요."); break;
-    case "confirm-order": showToast("주문 내용을 확정했어요. 이제 참여자별 입금이 시작돼요."); setPage("payment"); break;
-    case "add-menu":
-      openModal(`<div class="eyebrow">ADD YOUR MENU</div><h2 id="modalTitle">메뉴 추가하기</h2><p>채팅방 참여자와 메뉴를 나눠 주문해요.</p>      <div class="form-grid"><div class="form-field full"><label for="menuName">메뉴 이름</label><input id="menuName" placeholder="예: 치즈볼" /></div><div class="form-field"><label for="menuPrice">1개 가격</label><input id="menuPrice" type="number" min="1" placeholder="예: 5000" /></div><div class="form-field"><label for="menuQuantity">수량</label><input id="menuQuantity" type="number" min="1" value="1" /></div></div><button class="primary-button" id="saveMenu">메뉴 추가하기</button>`);
+    case "open-own-menu": setPage("detail"); break;
+    case "participant-account":
+      void showParticipantAccount(target.dataset.participant).catch((error) => {
+        console.error("Virtual account request error:", error.message);
+        showToast(`가상계좌를 처리하지 못했습니다: ${error.message}`);
+      });
       break;
-    case "participant-account": showParticipantAccount(target.dataset.participant); break;
     case "copy-issued-account":
       navigator.clipboard?.writeText(target.dataset.account)
         .then(() => showToast("가상계좌 번호를 복사했어요."))
         .catch(() => showToast(`계좌번호: ${target.dataset.account}`));
       break;
     case "received":
-      if (!received.has("서연")) { received.add("서연"); render(); showToast(received.size === 3 ? "모든 참여자가 수령을 확인했어요. 거래가 완료됐어요!" : "수령 완료를 확인했어요."); }
+      void confirmGroupReceipt().catch((error) => showToast(`수령 확인을 처리하지 못했습니다: ${error.message}`));
       break;
     case "review":
       rating = 0;
@@ -956,6 +1253,15 @@ document.addEventListener("change", (event) => {
   if (event.target.matches(".sort-select")) {
     sortBy = event.target.value;
     render();
+  }
+  if (event.target.id === "deadline") {
+    const customDeadline = document.querySelector("#customDeadline");
+    customDeadline.hidden = event.target.value !== "custom";
+    customDeadline.required = event.target.value === "custom";
+    if (customDeadline.required && !customDeadline.value) {
+      const date = new Date(Date.now() + 60 * 60_000);
+      customDeadline.value = new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+    }
   }
 });
 
@@ -992,6 +1298,15 @@ document.addEventListener("submit", async (event) => {
       showToast("음식점을 선택해 주세요.");
       return;
     }
+    const deadlineValue = String(form.get("deadline") || "");
+    const deadlineDate = deadlineValue === "custom"
+      ? new Date(String(form.get("customDeadline") || ""))
+      : new Date(Date.now() + Number(deadlineValue) * 60_000);
+    if (!Number.isFinite(deadlineDate.getTime()) || deadlineDate.getTime() <= Date.now()) {
+      showToast("모집 마감 시간은 현재 시각보다 뒤로 선택해 주세요.");
+      return;
+    }
+    const deadlineAt = deadlineDate.toISOString();
     const selectedMenu = [...event.target.querySelectorAll("[data-menu-id]")]
       .map((input) => ({
         id: input.dataset.menuId,
@@ -1018,7 +1333,8 @@ document.addEventListener("submit", async (event) => {
       minimum_amount: selectedRestaurant.minimumOrder,
       current_amount: currentAmount,
       selected_menu: selectedMenu,
-      deadline: `${form.get("deadline")} 마감`,
+      deadline: `${deadlineValue === "custom" ? new Date(deadlineAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : `${deadlineValue}분 후`} 마감`,
+      deadline_at: deadlineAt,
       leader: currentUserName(),
       rating: 4.8,
       trades: 0,
@@ -1038,14 +1354,7 @@ document.addEventListener("submit", async (event) => {
   }
   if (event.target.id === "chatForm") {
     event.preventDefault();
-    const input = event.target.elements.message;
-    const message = input.value.trim();
-    if (!message) { showToast("메시지를 입력해 주세요."); return; }
-    const container = document.querySelector("#chatMessages");
-    container.insertAdjacentHTML("beforeend", `<div class="chat-message mine">${avatar(currentUserName())}<div><div class="bubble"></div><span class="message-time">방금</span></div></div>`);
-    container.lastElementChild.querySelector(".bubble").textContent = message;
-    input.value = "";
-    container.scrollTop = container.scrollHeight;
+    await submitGroupMessage(event.target);
   }
 });
 
@@ -1053,16 +1362,6 @@ document.querySelector("#modalClose").addEventListener("click", closeModal);
 modalBackdrop.addEventListener("click", (event) => { if (event.target === modalBackdrop) closeModal(); });
 document.addEventListener("click", (event) => {
   if (event.target.id === "modalDone") closeModal();
-  if (event.target.id === "saveMenu") {
-    const name = document.querySelector("#menuName").value.trim();
-    const price = Number(document.querySelector("#menuPrice").value);
-    const quantity = Number(document.querySelector("#menuQuantity").value);
-    if (!name || !Number.isFinite(price) || price <= 0 || !Number.isInteger(quantity) || quantity <= 0) { showToast("메뉴 이름, 가격, 수량을 확인해 주세요."); return; }
-    customMenu.push({ name: escapeHTML(name), by: currentUserName(), price, quantity });
-    closeModal();
-    if (currentPage === "chat") render();
-    showToast(`${name} 메뉴를 주문 내역에 추가했어요.`);
-  }
   if (event.target.dataset.rating) {
     rating = Number(event.target.dataset.rating);
     document.querySelectorAll("#ratingStars button").forEach((star) => star.classList.toggle("selected", Number(star.dataset.rating) <= rating));
@@ -1079,10 +1378,14 @@ document.querySelector("#helpButton").addEventListener("click", () => {
 });
 
 document.querySelector(".brand").addEventListener("click", (event) => { event.preventDefault(); setPage("discover"); });
-if (new URLSearchParams(window.location.search).get("page") === "payment") {
-  setPage("payment");
-  showToast("가상계좌 상태를 불러왔어요.");
-} else {
-  render();
-}
-authInitialization = initializeAuth();
+const initialPage = new URLSearchParams(window.location.search).get("page");
+const initialPostId = new URLSearchParams(window.location.search).get("postId");
+render();
+window.setInterval(updateDeadlineCountdowns, 1000);
+authInitialization = initializeAuth().then(() => {
+  if (initialPage === "payment" && authState.user) {
+    if (initialPostId) selectedPost = posts.find((post) => String(post.id) === initialPostId) || null;
+    setPage("payment");
+    showToast("가상계좌 상태를 불러왔어요.");
+  }
+});

@@ -6,7 +6,7 @@ GitHub 저장소를 Vercel에 가져오고 Framework Preset은 `Other`, Root Dir
 
 ## Toss 가상계좌 테스트 준비
 
-가상계좌는 공동배달 참여자별로 별도 발급합니다. 이 데모는 `민지 15,000원`, `서연 9,000원`, `유진 8,000원`의 고정된 샘플 분담액을 사용합니다.
+가상계좌는 모집글별로 승인된 참여자에게 각각 발급합니다. 모집글 작성자는 본인이 고른 메뉴 금액을, 참여자는 본인이 고른 메뉴 금액을 부담합니다. 실제 결제 연동은 Toss 테스트 키로만 검증할 수 있습니다.
 
 1. Toss Payments 개발자센터에서 테스트 상점의 **클라이언트 키**와 **시크릿 키**를 발급합니다. `test_ck_` 및 `test_sk_`로 시작하는 테스트 키만 이 API에서 허용합니다.
 2. Upstash에서 Redis 데이터베이스를 만들고 REST URL과 REST Token을 준비합니다. 서버리스 재시작 뒤에도 발급 내역과 입금 상태를 보존하기 위해 필요합니다.
@@ -48,6 +48,7 @@ create table if not exists public.recruitment_posts (
   current_amount integer not null default 0,
   selected_menu jsonb not null default '[]'::jsonb,
   deadline text not null,
+  deadline_at timestamptz not null default (now() + interval '15 minutes'),
   leader text not null,
   rating numeric not null default 4.8,
   trades integer not null default 0,
@@ -83,9 +84,16 @@ grant select on public.recruitment_posts to anon, authenticated;
 grant insert, update, delete on public.recruitment_posts to authenticated;
 ```
 
-기존에 `recruitment_posts` 테이블을 이미 만들었다면 SQL Editor에서 [`supabase/recruitment-menu-columns.sql`](./supabase/recruitment-menu-columns.sql)을 실행해 메뉴 저장용 컬럼을 추가하세요. 이어서 [`supabase/recruitment-menu-selections.sql`](./supabase/recruitment-menu-selections.sql)을 실행하면 승인된 참가자의 메뉴 선택을 저장하는 테이블과 합계 갱신 함수가 생성됩니다. 이 파일은 `applications.sql` 실행 후 적용해야 합니다. 모집글 작성자는 상세 화면이나 신청자 관리에서 본인 모집글을 삭제할 수 있으며, 연결된 신청 내역도 함께 삭제됩니다. 앱의 음식점·메뉴·최소주문금액은 현재 테스트용 목록으로 제공되며, 실제 배달 플랫폼이나 음식점 메뉴 API와 연동된 것은 아닙니다.
+기존 DB에는 아래 SQL을 순서대로 적용하세요. `recruitment-menu-columns.sql`은 이전 메뉴 기능을 위해 이미 실행했다면 건너뛰면 됩니다.
 
-모집글 작성에서 음식점을 선택하면 테스트 목록의 메뉴와 수량을 고를 수 있고, 메뉴 가격으로 주문 합계를 계산합니다. 선택한 음식점의 최소주문금액은 자동 반영되며, 합계와 최소주문금액의 차액도 바로 표시됩니다. 신청자가 모집글에서 동참 신청을 누르면 Supabase에 대기 신청이 저장됩니다. 모집글 소유자는 **신청자 관리**에서 신청을 승인하거나 거절할 수 있고, 승인은 정원도 원자적으로 확인해 갱신합니다. 승인된 참가자는 모집글 상세에서 본인 메뉴를 저장할 수 있으며, 서버에서 메뉴와 가격을 확인해 주문 합계를 원자적으로 갱신합니다. 신청자는 대기 중인 신청을 취소할 수 있습니다. 메뉴 선택에 따른 결제 분담이나 실제 주문 연동은 아직 데모 범위입니다.
+1. [`supabase/applications.sql`](./supabase/applications.sql)
+2. [`supabase/recruitment-menu-columns.sql`](./supabase/recruitment-menu-columns.sql) (이미 실행한 경우 생략)
+3. [`supabase/recruitment-menu-selections.sql`](./supabase/recruitment-menu-selections.sql)
+4. [`supabase/recruitment-group-workflows.sql`](./supabase/recruitment-group-workflows.sql)
+
+마지막 마이그레이션은 모집 마감 시각과 남은 시간, 승인된 참여자 전용 채팅/수령 확인, 결제 시작 잠금 및 그룹별 결제 roster를 설정합니다. 기존 모집글의 마감 시각은 저장된 생성 시각과 기존 마감 문구를 바탕으로 채웁니다. 모집글 작성자는 상세 화면이나 신청자 관리에서 본인 모집글을 삭제할 수 있으며, 연결된 신청 내역도 함께 삭제됩니다. 앱의 음식점·메뉴·최소주문금액은 현재 테스트용 목록으로 제공되며, 실제 배달 플랫폼이나 음식점 메뉴 API와 연동된 것은 아닙니다.
+
+모집글 작성에서 음식점을 선택하면 테스트 목록의 메뉴와 수량을 고를 수 있고, 메뉴 가격으로 주문 합계를 계산합니다. 신청자가 모집글에서 동참 신청을 누르면 Supabase에 저장되며, 모집글 소유자는 신청을 승인하거나 거절할 수 있습니다. 승인된 참가자는 모집글 상세에서 본인 메뉴를 저장하고, 자신의 메뉴 금액대로 Toss 테스트 가상계좌를 발급할 수 있습니다. 채팅 메시지, 참가자별 메뉴, Toss 입금 상태, 실제 수령 확인은 모집글별로 연결됩니다. 결제 시작 뒤에는 메뉴 변경이 잠기며, 마감 시간 경과 후 미입금 계좌 취소와 입금 완료분 환불 흐름은 QStash/Toss 테스트 연동을 사용합니다. 주문/배달 상태는 실제 배달 플랫폼 API가 없어 자동 표시하지 않습니다. 진행 상황은 확인 가능한 모집·메뉴·입금 및 참가자 수령 확인만 표시합니다.
 
 ### 가상계좌 환불 필수 설정
 
@@ -97,4 +105,4 @@ grant insert, update, delete on public.recruitment_posts to authenticated;
 
 ## 범위 및 실서비스 전환 전 필수 작업
 
-이메일 인증과 모집글 저장/공개 조회, 신청 승인/거절은 Supabase를 사용하지만, 승인 뒤 채팅 초대, 사용자별 부담액 계산, 분쟁 처리, 가상계좌 정산 및 서비스 운영에 필요한 Toss 계약·심사는 포함하지 않습니다. 결제 서버는 데모 공동배달 ID와 고정 참여자만 허용하고 Toss 테스트 API 키만 받습니다. 자동 취소·환불 흐름은 새 데모 ID를 사용하므로 이전 테스트의 Redis 기록과 분리됩니다. 가상계좌 한 건은 한 참여자의 결제이므로 참여자별로 발급됩니다. 테스트 키를 실서비스 키로 바꾸는 것만으로 실서비스 전환이 되지 않습니다.
+이메일 인증과 모집글 공유, 신청 승인/거절, 승인된 구성원의 채팅, 메뉴별 부담액 계산, 테스트 가상계좌 발급 및 테스트 취소/환불 흐름은 Supabase, Toss, Upstash, QStash를 사용합니다. 주문·배달 업체 API가 연결되어 있지 않으므로 실제 주문 접수나 배달 중 상태는 표시하지 않습니다. 테스트 키를 실서비스 키로 바꾸는 것만으로 실서비스 전환이 되지 않으며, Toss 계약·심사, 운영 및 분쟁 처리 등 추가 작업이 필요합니다.
