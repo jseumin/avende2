@@ -34,6 +34,8 @@ const avatarClass = (name) => ({ 서연: "avatar-me", 민지: "avatar-purple", �
 const avatar = (name, large = false) => `<span class="avatar ${large ? "avatar-large" : avatarClass(name)}">${escapeHTML(name.slice(0, 1))}</span>`;
 const currentUserName = () => authState.user ? authDisplayName() : "게스트";
 const participantName = (name) => name === "서연" ? currentUserName() : name;
+const isPostOwner = (post) => post.ownerId === (authState.user?.id || "guest")
+  || Boolean(authState.user?.email && post.ownerEmail === authState.user.email);
 
 function showToast(message) {
   toast.textContent = message;
@@ -110,6 +112,7 @@ function discoverPage() {
 
 function detailPage() {
   const post = selectedPost;
+  const isOwner = isPostOwner(post);
   const isApplied = appliedPostId === post.id;
   const blockedByOtherApplication = appliedPostId !== null && !isApplied;
   const full = post.joined >= post.max;
@@ -123,8 +126,10 @@ function detailPage() {
       <div class="leader-card">${avatar(post.leader, true)}<div class="leader-info"><strong>${escapeHTML(post.leader)}</strong><small>따뜻한 한 끼를 함께해요</small></div></div>
       <div class="reputation-row"><div><strong><span class="star">★</span> ${post.rating}</strong>평점</div><div><strong>${post.trades}회</strong>거래 횟수</div><div><strong>100%</strong>매너 온도</div></div>
       <div class="detail-block"><h3>최소주문까지</h3><p style="color:#e68b5d;font-weight:700;font-size:15px">${won(Math.max(post.minimum - post.amount, 0))} 남았어요</p></div>
-      <button class="primary-button" style="width:100%;margin-top:17px" data-action="apply" ${blockedByOtherApplication || full ? "disabled" : ""}>${isApplied ? "신청 취소하기" : full ? "모집 인원 마감" : blockedByOtherApplication ? "다른 모집글 신청 중" : "동참 신청하기"} <span>→</span></button>
-      <div class="join-note">${isApplied ? "리더의 승인을 기다리고 있어요." : blockedByOtherApplication ? "신청을 취소하거나 거절된 후 다른 모집글에 신청할 수 있어요." : full ? "모집 인원이 모두 찼어요." : "신청 후 리더의 승인을 기다려요."}</div>
+      ${isOwner
+        ? `<button class="primary-button" style="width:100%;margin-top:17px" data-page="applicants">신청자 관리</button><div class="join-note">내가 만든 모집글이에요. 신청할 수 없습니다.</div>`
+        : `<button class="primary-button" style="width:100%;margin-top:17px" data-action="apply" ${blockedByOtherApplication || full ? "disabled" : ""}>${isApplied ? "신청 취소하기" : full ? "모집 인원 마감" : blockedByOtherApplication ? "다른 모집글 신청 중" : "동참 신청하기"} <span>→</span></button>
+      <div class="join-note">${isApplied ? "리더의 승인을 기다리고 있어요." : blockedByOtherApplication ? "신청을 취소하거나 거절된 후 다른 모집글에 신청할 수 있어요." : full ? "모집 인원이 모두 찼어요." : "신청 후 리더의 승인을 기다려요."}</div>`}
     </aside></div>`;
 }
 
@@ -145,8 +150,11 @@ function createPage() {
 }
 
 function applicantsPage() {
+  const myPosts = posts.filter(isPostOwner);
   return `<div class="page-heading"><div><div class="eyebrow">LEADER DASHBOARD</div><h1>신청자 관리</h1><p class="subheading">내가 올린 모집글의 신청자를 확인해요.</p></div><button class="secondary-button" data-page="discover">모집글 보기</button></div>
-    <section class="page-card"><div class="empty-state">아직 등록한 모집글이 없어요.<br />모집글을 만들면 이곳에서 신청자를 확인할 수 있어요.<br /><button class="primary-button" style="margin-top:16px" data-page="create">모집글 만들기</button></div></section>`;
+    ${myPosts.length
+      ? `<section class="post-grid">${myPosts.map((post) => `<article class="page-card owned-post-card"><div class="section-title"><h2>${escapeHTML(post.restaurant)}</h2><span class="tag">${escapeHTML(post.category)}</span></div><p class="subheading">${escapeHTML(post.deadline)} · 참여 ${post.joined} / ${post.max}명</p><p class="subheading">신청자 관리 기능은 준비 중이에요.</p><button class="secondary-button" data-action="manage-owned-post" data-post-id="${post.id}">모집글 확인</button></article>`).join("")}</section>`
+      : `<section class="page-card"><div class="empty-state">아직 등록한 모집글이 없어요.<br />모집글을 만들면 이곳에서 신청자를 확인할 수 있어요.<br /><button class="primary-button" style="margin-top:16px" data-page="create">모집글 만들기</button></div></section>`}`;
 }
 
 async function refreshVirtualAccounts() {
@@ -540,8 +548,17 @@ document.addEventListener("click", (event) => {
     case "auth-mode-signup": showAuthModal("signup"); break;
     case "auth-mode-reset": showAuthModal("reset"); break;
     case "auth-logout": signOut(); break;
+    case "manage-owned-post": {
+      selectedPost = posts.find((post) => post.id === Number(target.dataset.postId)) || null;
+      if (selectedPost) setPage("detail");
+      break;
+    }
     case "refresh": showToast("현재 위치 주변의 모집글을 보여드리고 있어요."); break;
     case "apply":
+      if (isPostOwner(selectedPost)) {
+        showToast("내가 만든 모집글에는 동참 신청할 수 없어요.");
+        break;
+      }
       if (appliedPostId !== null && appliedPostId !== selectedPost.id) {
         showToast("한 번에 하나의 모집글에만 신청할 수 있어요.");
         break;
@@ -607,7 +624,8 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
     const newPost = {
-      id: Date.now(), restaurant: escapeHTML(form.get("restaurant")), emoji: categoryIcons[form.get("category")] || "🍽️",
+      id: Date.now(), ownerId: authState.user?.id || "guest", ownerEmail: authState.user?.email || null,
+      restaurant: escapeHTML(form.get("restaurant")), emoji: categoryIcons[form.get("category")] || "🍽️",
       theme: "chicken", category: form.get("category"), distance: 90, joined: 1,
       max: Number.parseInt(form.get("members"), 10), minimum: Number(form.get("minimum")),
       amount: Number(form.get("current") || 0), deadline: `${form.get("deadline")} 마감`,
