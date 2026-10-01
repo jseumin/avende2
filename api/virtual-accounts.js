@@ -8,6 +8,7 @@ const {
 const legacyParticipants = { 민지: 15000, 서연: 9000, 유진: 8000 };
 const keyPrefix = "moa:demo-group-auto-refund-01";
 const recordTtlSeconds = 60 * 60 * 24 * 30;
+const paymentWindowMs = 5 * 60_000;
 const legacyGroupId = "demo-group-auto-refund-01";
 const isLegacyGroup = (groupId) => groupId === legacyGroupId;
 const isUuid = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -186,7 +187,7 @@ async function ensureGroupDeadline(groupId, context, roster) {
   if (!isLegacyGroup(groupId)) {
     await beginRecruitmentPayments(context, groupId);
   }
-  const deadlineAt = Date.now() + 60 * 60_000;
+  const deadlineAt = Date.now() + paymentWindowMs;
   const group = {
     groupId,
     status: isLegacyGroup(groupId) ? "COLLECTING" : "PREPARING",
