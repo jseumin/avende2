@@ -38,7 +38,9 @@ const escapeHTML = (value) => String(value).replace(/[&<>"']/g, (character) => (
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[character]));
 const avatarClass = (name) => ({ 서연: "avatar-me", 민지: "avatar-purple", 준호: "avatar-blue", 하은: "avatar-pink", 도윤: "avatar-purple", 유진: "avatar-pink", 시우: "avatar-blue" }[name] || "avatar-purple");
-const avatar = (name, large = false) => `<span class="avatar ${large ? "avatar-large" : avatarClass(name)}">${name.slice(0, 1)}</span>`;
+const avatar = (name, large = false) => `<span class="avatar ${large ? "avatar-large" : avatarClass(name)}">${escapeHTML(name.slice(0, 1))}</span>`;
+const currentUserName = () => authState.user ? authDisplayName() : "게스트";
+const participantName = (name) => name === "서연" ? currentUserName() : name;
 
 function showToast(message) {
   toast.textContent = message;
@@ -85,7 +87,7 @@ function renderPostCard(post) {
     <div class="post-meta"><span class="member-count"><b>${post.joined}</b> / ${post.max}명 모집 중</span><span class="post-deadline">◷ ${post.deadline}</span></div>
     <div class="post-money"><span>현재 모인 금액</span><strong>${won(post.amount)}</strong></div>
     <div class="post-money"><span>최소주문까지</span><strong class="money-need">${won(Math.max(post.minimum - post.amount, 0))} 남음</strong></div>
-    <div class="leader-line">${avatar(post.leader)}<span>${post.leader} 리더</span><span class="leader-rating"><b class="star">★</b> ${post.rating} · 거래 ${post.trades}회</span></div>
+    <div class="leader-line">${avatar(post.leader)}<span>${escapeHTML(post.leader)} 리더</span><span class="leader-rating"><b class="star">★</b> ${post.rating} · 거래 ${post.trades}회</span></div>
   </article>`;
 }
 
@@ -125,7 +127,7 @@ function detailPage() {
       <div class="detail-block"><h3>리더의 한마디</h3><p>${post.note}</p></div>
       <div class="detail-block"><h3>모집 안내</h3><p>모집 마감 ${post.deadline}<br />메뉴는 매칭 후 공동 채팅방에서 함께 정해요. 만남 장소와 수령 시간도 채팅으로 편하게 조율할 수 있어요.</p></div>
     </section><aside class="page-card"><div class="section-title"><h2>리더 정보</h2><button class="text-button" data-action="leader-profile">프로필 보기</button></div>
-      <div class="leader-card">${avatar(post.leader, true)}<div class="leader-info"><strong>${post.leader}</strong><small>따뜻한 한 끼를 함께해요</small></div></div>
+      <div class="leader-card">${avatar(post.leader, true)}<div class="leader-info"><strong>${escapeHTML(post.leader)}</strong><small>따뜻한 한 끼를 함께해요</small></div></div>
       <div class="reputation-row"><div><strong><span class="star">★</span> ${post.rating}</strong>평점</div><div><strong>${post.trades}회</strong>거래 횟수</div><div><strong>100%</strong>매너 온도</div></div>
       <div class="detail-block"><h3>최소주문까지</h3><p style="color:#e68b5d;font-weight:700;font-size:15px">${won(Math.max(post.minimum - post.amount, 0))} 남았어요</p></div>
       <button class="primary-button" style="width:100%;margin-top:17px" data-action="apply" ${blockedByOtherApplication || full ? "disabled" : ""}>${isApplied ? "신청 취소하기" : full ? "모집 인원 마감" : blockedByOtherApplication ? "다른 모집글 신청 중" : "동참 신청하기"} <span>→</span></button>
@@ -202,7 +204,8 @@ async function showParticipantAccount(participantId) {
       const accountNumber = account.accountNumber
         ? `<div class="issued-account-number">${escapeHTML(account.accountNumber)}</div><button class="secondary-button" data-action="copy-issued-account" data-account="${escapeHTML(account.accountNumber)}">계좌번호 복사</button>`
         : "<p>입금 확인을 기다리고 있어요.</p>";
-      openModal(`<div class="eyebrow">TOSS TEST VIRTUAL ACCOUNT</div><h2 id="modalTitle">${escapeHTML(participantId)}님의 가상계좌</h2><p>아래 계좌는 이 참여자의 분담액 전용입니다. 정확한 금액으로 입금해 주세요.</p><div class="issued-account-card"><strong>${escapeHTML(bankName)}</strong>${accountNumber}<span>입금 금액 <b>${won(account.amount)}</b></span><span>입금 상태 <b>${account.status === "PAID" ? "입금 완료" : "입금 대기"}</b></span><span>입금 기한 <b>${escapeHTML(account.dueDate || "토스페이먼츠 안내 시간")}</b></span></div><button class="primary-button" id="modalDone">확인</button>`);
+      const accountOwner = participantName(participantId);
+      openModal(`<div class="eyebrow">TOSS TEST VIRTUAL ACCOUNT</div><h2 id="modalTitle">${escapeHTML(accountOwner)}님의 가상계좌</h2><p>아래 계좌는 이 참여자의 분담액 전용입니다. 정확한 금액으로 입금해 주세요.</p><div class="issued-account-card"><strong>${escapeHTML(bankName)}</strong>${accountNumber}<span>입금 금액 <b>${won(account.amount)}</b></span><span>입금 상태 <b>${account.status === "PAID" ? "입금 완료" : "입금 대기"}</b></span><span>입금 기한 <b>${escapeHTML(account.dueDate || "토스페이먼츠 안내 시간")}</b></span></div><button class="primary-button" id="modalDone">확인</button>`);
       return;
     } else {
       response = await fetch("/api/virtual-accounts", {
@@ -253,13 +256,14 @@ async function showParticipantAccount(participantId) {
 }
 
 function chatPage() {
-  const menu = [{ name: "숯불양념치킨", by: "민지", price: 18000, quantity: 1 }, { name: "치즈볼", by: "유진", price: 5000, quantity: 1 }, { name: "콜라", by: "서연", price: 2000, quantity: 1 }, ...customMenu];
+  const name = currentUserName();
+  const menu = [{ name: "숯불양념치킨", by: "민지", price: 18000, quantity: 1 }, { name: "치즈볼", by: "유진", price: 5000, quantity: 1 }, { name: "콜라", by: name, price: 2000, quantity: 1 }, ...customMenu];
   return `<div class="page-heading"><div><div class="eyebrow">GROUP ROOM · 3명 참여 중</div><h1>꼬꼬아찌 같이 시켜요 🍗</h1><p class="subheading">연남동 · 오늘 오후 7:30 배달 예정</p></div><button class="secondary-button" data-page="payment">입금 현황 →</button></div>
-    <div class="chat-layout"><section class="chat-panel"><div class="chat-header"><div><strong>🍗 꼬꼬아찌 숯불치킨</strong><small>민지, 유진, 서연 · 3명</small></div><div class="online-dots">${["민지", "유진", "서연"].map((name) => avatar(name)).join("")}</div></div><div class="chat-status">● 메뉴 결정 중 <span style="color:#a1aaa4">　→　입금 대기　→　결제 완료　→　배달 중</span></div>
-      <div class="chat-messages" id="chatMessages"><div class="chat-message">${avatar("민지")}<div><div class="bubble">안녕하세요! 숯불양념치킨으로 주문하려고 해요 🍗</div><span class="message-time">오후 7:12</span></div></div><div class="chat-message">${avatar("유진")}<div><div class="bubble">좋아요! 치즈볼도 하나 추가할게요 🙌</div><span class="message-time">오후 7:14</span></div></div><div class="chat-message mine">${avatar("서연")}<div><div class="bubble">저는 콜라 추가할게요. 메뉴 확정해도 좋을 것 같아요!</div><span class="message-time">오후 7:15</span></div></div></div>
+    <div class="chat-layout"><section class="chat-panel"><div class="chat-header"><div><strong>🍗 꼬꼬아찌 숯불치킨</strong><small>민지, 유진, ${escapeHTML(name)} · 3명</small></div><div class="online-dots">${["민지", "유진", name].map((person) => avatar(person)).join("")}</div></div><div class="chat-status">● 메뉴 결정 중 <span style="color:#a1aaa4">　→　입금 대기　→　결제 완료　→　배달 중</span></div>
+      <div class="chat-messages" id="chatMessages"><div class="chat-message">${avatar("민지")}<div><div class="bubble">안녕하세요! 숯불양념치킨으로 주문하려고 해요 🍗</div><span class="message-time">오후 7:12</span></div></div><div class="chat-message">${avatar("유진")}<div><div class="bubble">좋아요! 치즈볼도 하나 추가할게요 🙌</div><span class="message-time">오후 7:14</span></div></div><div class="chat-message mine">${avatar(name)}<div><div class="bubble">저는 콜라 추가할게요. 메뉴 확정해도 좋을 것 같아요!</div><span class="message-time">오후 7:15</span></div></div></div>
       <form id="chatForm" class="chat-input"><input name="message" required placeholder="메시지를 입력해 주세요..." /><button aria-label="메시지 보내기">↑</button></form>
-    </section><aside><section class="page-card">    <div class="section-title"><h2>현재 주문 내역</h2><button class="text-button" data-action="add-menu">＋ 메뉴 추가</button></div><div class="menu-order">${menu.map((item) => `<div class="order-line"><span>${item.by} · ${item.name}${item.quantity > 1 ? ` × ${item.quantity}` : ""}</span><strong>${won(item.price * item.quantity)}</strong></div>`).join("")}<div class="order-total"><span>총 주문금액</span><strong>${won(menu.reduce((total, item) => total + item.price * item.quantity, 0))}</strong></div></div><button class="primary-button" style="width:100%;margin-top:15px" data-action="confirm-order">주문 내용 확정하기</button></section>
-      <section class="page-card" style="margin-top:13px"><div class="section-title"><h2>참여자</h2></div>${["민지", "유진", "서연"].map((name) => `<div class="participant-row">${avatar(name)}<div class="participant-copy"><strong>${name}${name === "서연" ? " (나)" : ""}</strong><small>${name === "민지" ? "리더" : "참여자"}</small></div><span class="status-pill ${name === "서연" ? "status-paid" : "status-pending"}">${name === "서연" ? "메뉴 선택" : "참여 중"}</span></div>`).join("")}</section></aside></div>`;
+    </section><aside><section class="page-card">    <div class="section-title"><h2>현재 주문 내역</h2><button class="text-button" data-action="add-menu">＋ 메뉴 추가</button></div><div class="menu-order">${menu.map((item) => `<div class="order-line"><span>${escapeHTML(item.by)} · ${item.name}${item.quantity > 1 ? ` × ${item.quantity}` : ""}</span><strong>${won(item.price * item.quantity)}</strong></div>`).join("")}<div class="order-total"><span>총 주문금액</span><strong>${won(menu.reduce((total, item) => total + item.price * item.quantity, 0))}</strong></div></div><button class="primary-button" style="width:100%;margin-top:15px" data-action="confirm-order">주문 내용 확정하기</button></section>
+      <section class="page-card" style="margin-top:13px"><div class="section-title"><h2>참여자</h2></div>${["민지", "유진", "서연"].map((person) => { const isMe = person === "서연"; const label = participantName(person); return `<div class="participant-row">${avatar(label)}<div class="participant-copy"><strong>${escapeHTML(label)}${isMe ? " (나)" : ""}</strong><small>${person === "민지" ? "리더" : "참여자"}</small></div><span class="status-pill ${isMe ? "status-paid" : "status-pending"}">${isMe ? "메뉴 선택" : "참여 중"}</span></div>`; }).join("")}</section></aside></div>`;
 }
 
 function paymentPage() {
@@ -272,6 +276,7 @@ function paymentPage() {
       ${people.map((person) => {
         const account = virtualAccounts.get(person.name);
         const status = account?.status || "NOT_ISSUED";
+        const displayName = participantName(person.name);
         const paidStatus = status === "PAID";
         const statusLabel = paidStatus ? "입금 완료"
           : status === "REFUND_REQUESTED" ? "환불 처리 중"
@@ -284,31 +289,32 @@ function paymentPage() {
         const groupOpen = !paymentGroup || paymentGroup.status === "COLLECTING";
         const actionLabel = canIssue ? "계좌 발급" : status === "REQUESTING" ? "발급 진행 중" : "계좌 확인";
         const showAction = canIssue && groupOpen;
-        return `<div class="participant-row payment-participant">${avatar(person.name)}<div class="participant-copy"><strong>${person.name}${person.name === "서연" ? " (나)" : ""}</strong><small>${person.name === "민지" ? "리더" : "참여자"} · ${won(person.amount)}</small></div><span class="status-pill ${paidStatus ? "status-paid" : status === "REFUND_ACTION_REQUIRED" ? "status-pending" : "status-pending"}">${statusLabel}</span>${showAction ? `<button class="secondary-button account-action" data-action="participant-account" data-participant="${person.name}" ${status === "REQUESTING" ? "disabled" : ""}>${actionLabel}</button>` : ""}</div>`;
+        return `<div class="participant-row payment-participant">${avatar(displayName)}<div class="participant-copy"><strong>${escapeHTML(displayName)}${person.name === "서연" ? " (나)" : ""}</strong><small>${person.name === "민지" ? "리더" : "참여자"} · ${won(person.amount)}</small></div><span class="status-pill ${paidStatus ? "status-paid" : status === "REFUND_ACTION_REQUIRED" ? "status-pending" : "status-pending"}">${statusLabel}</span>${showAction ? `<button class="secondary-button account-action" data-action="participant-account" data-participant="${person.name}" ${status === "REQUESTING" ? "disabled" : ""}>${actionLabel}</button>` : ""}</div>`;
       }).join("")}
       <div class="progress-track"><div class="progress-fill" style="width:${Math.round((paidTotal / total) * 100)}%"></div></div><div class="progress-caption"><span>입금 완료 금액 ${won(paidTotal)}</span><span>${Math.round((paidTotal / total) * 100)}%</span></div>
     </section><aside class="page-card"><div class="section-title"><h2>참여자별 가상계좌</h2><span class="tag">Toss 테스트</span></div><p class="subheading">결제창에서 은행을 선택하면 각 계좌에 해당 참여자의 분담액만 입금할 수 있어요.</p>
       <div class="account-info-box">${virtualAccountError ? `<strong>연동 설정이 필요해요</strong><span>${escapeHTML(virtualAccountError)}</span>` : paymentGroup?.status === "COLLECTING" ? `<strong>입금 마감 ${new Date(paymentGroup.deadlineAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</strong><span>마감까지 전원이 입금하지 않으면 공동배달은 자동 취소됩니다. 입금 완료자의 환불 계좌가 확인되면 환불을 요청해요.</span>` : paymentGroup?.status === "ORDER_READY" ? "<strong>모든 참여자의 입금이 완료됐어요</strong><span>공동배달 주문을 진행할 수 있습니다.</span>" : paymentGroup?.status === "CANCELLING" ? "<strong>공동배달 취소 처리 중</strong><span>미입금 계좌를 취소하고 입금된 금액의 환불을 요청하고 있어요.</span>" : paymentGroup?.status === "REFUND_ACTION_REQUIRED" ? "<strong>환불 계좌 확인이 필요해요</strong><span>입금자의 환불 계좌 정보가 없어 자동 환불을 진행하지 못했습니다. 토스 결제내역에서 해당 결제를 확인해 주세요.</span>" : paymentGroup?.status === "REFUNDING" ? "<strong>공동배달이 취소됐어요</strong><span>입금 완료 금액의 환불을 요청했습니다. 은행 처리에는 영업일 기준 시간이 걸릴 수 있어요.</span>" : paymentGroup?.status === "CANCELED" ? "<strong>공동배달이 취소됐어요</strong><span>입금 마감까지 전원이 입금하지 않아 미입금 계좌를 취소했어요.</span>" : "<strong>입금 상태 자동 확인</strong><span>첫 참여자가 계좌 발급을 시작하면 1시간 입금 마감이 시작돼요.</span>"}</div>
       <div class="account-info-box refund-notice"><strong>환불 계좌 안내</strong><span>자동 환불을 위해 Toss 결제창에서 환불 계좌 입력이 필요해요. 토스 상점 설정에서 가상계좌 환불 정보 입력을 켜야 합니다. 계좌 정보가 없으면 자동 환불 대신 확인이 필요해요.</span></div>
-      <div class="detail-block"><h3>분담액 예시</h3><p>리더 15,000원 · 서연 9,000원 · 유진 8,000원<br />각 참여자는 자신의 가상계좌에 표시된 금액을 입금해요.</p></div>
+      <div class="detail-block"><h3>분담액 예시</h3><p>리더 15,000원 · ${escapeHTML(currentUserName())} 9,000원 · 유진 8,000원<br />각 참여자는 자신의 가상계좌에 표시된 금액을 입금해요.</p></div>
       <div class="join-note">${allPaid ? "모든 금액이 입금되었습니다. 배달 주문을 진행합니다." : "모든 참여자의 입금이 확인되면 주문을 진행해요."}</div>
     </aside></div>`;
 }
 
 function deliveryPage() {
+  const name = currentUserName();
   const steps = ["모집 완료", "메뉴 결정", "입금 대기", "결제 완료", "배달 중", "수령 확인"];
   return `<div class="page-heading"><div><div class="eyebrow">ORDER TRACKING</div><h1>공동배달 진행 상황</h1><p class="subheading">함께하는 주문의 모든 순간을 확인해요.</p></div><button class="secondary-button" data-page="chat">채팅방에서 조율하기</button></div>
     <section class="page-card"><div class="section-title"><h2>꼬꼬아찌 숯불치킨</h2><span class="status-pill status-paid">배달 중</span></div><p class="subheading">주문번호 #MM-0928-03 · 오늘 오후 7:18 주문 완료</p>
       <div class="timeline">${steps.map((step, i) => `<div class="timeline-step ${i < 4 ? "done" : i === 4 ? "current" : ""}"><div class="step-dot">${i < 4 ? "✓" : i + 1}</div>${step}</div>`).join("")}</div>
       <div class="delivery-summary"><div class="summary-tile"><small>예상 도착 시간</small><strong>오후 7:48 ~ 8:00</strong></div><div class="summary-tile"><small>주문 금액</small><strong>32,000원 · 결제 완료</strong></div><div class="summary-tile"><small>만남 장소</small><strong>연남동 주민센터 앞</strong></div><div class="summary-tile"><small>음식 수령 확인</small><strong>${received.size} / 3명</strong></div></div>
-    </section><div class="detail-layout" style="margin-top:15px"><section class="page-card"><div class="section-title"><h2>음식 수령 확인</h2><span class="subheading">${received.size} / 3명</span></div><p class="subheading">음식을 전달받은 뒤 수령 완료를 눌러주세요. 모두 확인하면 거래가 완료돼요.</p>${["민지", "서연", "유진"].map((name) => `<div class="participant-row">${avatar(name)}<div class="participant-copy"><strong>${name}${name === "서연" ? " (나)" : ""}</strong><small>${name === "민지" ? "리더" : "참여자"}</small></div><span class="status-pill ${received.has(name) ? "status-paid" : "status-pending"}">${received.has(name) ? "수령 확인" : "대기 중"}</span></div>`).join("")}
+    </section>    <div class="detail-layout" style="margin-top:15px"><section class="page-card"><div class="section-title"><h2>음식 수령 확인</h2><span class="subheading">${received.size} / 3명</span></div><p class="subheading">음식을 전달받은 뒤 수령 완료를 눌러주세요. 모두 확인하면 거래가 완료돼요.</p>${["민지", "서연", "유진"].map((person) => { const isMe = person === "서연"; const label = participantName(person); return `<div class="participant-row">${avatar(label)}<div class="participant-copy"><strong>${escapeHTML(label)}${isMe ? " (나)" : ""}</strong><small>${person === "민지" ? "리더" : "참여자"}</small></div><span class="status-pill ${received.has(person) ? "status-paid" : "status-pending"}">${received.has(person) ? "수령 확인" : "대기 중"}</span></div>`; }).join("")}
       <button class="primary-button" style="width:100%;margin-top:13px" data-action="received">${received.has("서연") ? "수령 완료 ✓" : "수령 완료하기"}</button></section>
       <aside class="page-card"><div class="section-title"><h2>주문 정보</h2></div><div class="detail-block"><h3>주문 상태</h3><p>음식이 조리 완료되어 배달 중이에요. 채팅방에서 만남 장소와 수령 시간을 조율할 수 있어요.</p></div><button class="secondary-button" style="width:100%;margin-top:17px" data-page="chat">공동 채팅방 열기</button></aside>
     </div>${received.size === 3 ? `<section class="page-card" style="margin-top:15px;text-align:center"><h2 style="font-size:16px">모든 참여자가 음식 수령을 확인했어요!</h2><p class="subheading">함께한 이웃과 즐거운 식사였나요?</p><button class="primary-button" data-action="review">서로 평가하기 →</button></section>` : ""}`;
 }
 
 function profilePage() {
-  const profileName = authState.user ? authDisplayName() : "게스트";
+  const profileName = currentUserName();
   return `<div class="page-heading"><div><div class="eyebrow">YOUR NEIGHBOR PROFILE</div><h1>내 프로필</h1><p class="subheading">함께한 이웃이 남긴 따뜻한 기록이에요.</p></div><button class="secondary-button" data-action="edit-profile">프로필 수정</button></div>
     <section class="page-card account-card"><div class="section-title"><h2>로그인 계정</h2></div><div id="profileAuthDetails">${authAccountMarkup()}</div></section>
     <section class="page-card"><div class="profile-hero">${avatar(profileName, true)}<div><h2>${escapeHTML(profileName)} <span class="tag">매너 온도 38.5°</span></h2><p>연남동 이웃 · 모아먹자와 함께한 지 3개월</p></div></div><div class="profile-numbers"><div><strong><span class="star">★</span> 4.8</strong>평균 별점</div><div><strong>23회</strong>공동배달</div><div><strong>18개</strong>받은 후기</div></div></section>
@@ -360,8 +366,7 @@ function updateAuthUI() {
   });
   const detail = document.querySelector("#sidebarUserDetail");
   if (detail) detail.textContent = authState.user?.email || "로그인하면 계정을 연결해요";
-  const profileDetails = document.querySelector("#profileAuthDetails");
-  if (profileDetails) profileDetails.innerHTML = authAccountMarkup();
+  render();
 }
 
 function showAuthModal(mode = "login") {
@@ -560,7 +565,7 @@ document.addEventListener("click", (event) => {
       showToast(appliedPostId === selectedPost.id ? "동참 신청을 보냈어요. 리더의 승인을 기다려 주세요!" : "신청을 취소했어요. 다른 모집글에 신청할 수 있어요.");
       break;
     case "leader-profile":
-      openModal(`<div class="eyebrow">NEIGHBOR PROFILE</div><h2>${selectedPost.leader}님의 프로필</h2><p>함께한 이웃의 평판과 거래 경험을 확인해 보세요.</p><div class="reputation-row"><div><strong><span class="star">★</span> ${selectedPost.rating}</strong>평점</div><div><strong>${selectedPost.trades}회</strong>거래</div><div><strong>100%</strong>매너</div></div><p>“약속 시간을 잘 지키고 따뜻한 이웃이에요!”</p><button class="primary-button" id="modalDone">확인</button>`);
+      openModal(`<div class="eyebrow">NEIGHBOR PROFILE</div><h2>${escapeHTML(selectedPost.leader)}님의 프로필</h2><p>함께한 이웃의 평판과 거래 경험을 확인해 보세요.</p><div class="reputation-row"><div><strong><span class="star">★</span> ${selectedPost.rating}</strong>평점</div><div><strong>${selectedPost.trades}회</strong>거래</div><div><strong>100%</strong>매너</div></div><p>“약속 시간을 잘 지키고 따뜻한 이웃이에요!”</p><button class="primary-button" id="modalDone">확인</button>`);
       break;
     case "accept":
       showToast(`${target.dataset.name}님의 신청을 수락했어요. 공동 채팅방에 초대됩니다.`);
@@ -616,7 +621,7 @@ document.addEventListener("submit", async (event) => {
       theme: "chicken", category: form.get("category"), distance: 90, joined: 1,
       max: Number.parseInt(form.get("members"), 10), minimum: Number(form.get("minimum")),
       amount: Number(form.get("current") || 0), deadline: `${form.get("deadline")} 마감`,
-      leader: "서연", rating: "4.8", trades: 23, note: escapeHTML(form.get("note") || "함께 주문해요!")
+      leader: currentUserName(), rating: "4.8", trades: 23, note: escapeHTML(form.get("note") || "함께 주문해요!")
     };
     posts.unshift(newPost);
     selectedPost = newPost;
@@ -630,7 +635,7 @@ document.addEventListener("submit", async (event) => {
     const message = input.value.trim();
     if (!message) { showToast("메시지를 입력해 주세요."); return; }
     const container = document.querySelector("#chatMessages");
-    container.insertAdjacentHTML("beforeend", `<div class="chat-message mine">${avatar("서연")}<div><div class="bubble"></div><span class="message-time">방금</span></div></div>`);
+    container.insertAdjacentHTML("beforeend", `<div class="chat-message mine">${avatar(currentUserName())}<div><div class="bubble"></div><span class="message-time">방금</span></div></div>`);
     container.lastElementChild.querySelector(".bubble").textContent = message;
     input.value = "";
     container.scrollTop = container.scrollHeight;
@@ -646,7 +651,7 @@ document.addEventListener("click", (event) => {
     const price = Number(document.querySelector("#menuPrice").value);
     const quantity = Number(document.querySelector("#menuQuantity").value);
     if (!name || !Number.isFinite(price) || price <= 0 || !Number.isInteger(quantity) || quantity <= 0) { showToast("메뉴 이름, 가격, 수량을 확인해 주세요."); return; }
-    customMenu.push({ name: escapeHTML(name), by: "서연", price, quantity });
+    customMenu.push({ name: escapeHTML(name), by: currentUserName(), price, quantity });
     closeModal();
     if (currentPage === "chat") render();
     showToast(`${name} 메뉴를 주문 내역에 추가했어요.`);
