@@ -3,6 +3,50 @@ const applications = [];
 
 const categories = ["전체", "치킨", "피자", "한식", "중식", "일식", "양식", "분식"];
 const categoryIcons = { 전체: "✦", 치킨: "🍗", 피자: "🍕", 한식: "🍚", 중식: "🥟", 일식: "🍣", 양식: "🍔", 분식: "🍡" };
+const restaurantCatalog = [
+  {
+    id: "yeonnam-chicken",
+    name: "연남 치킨집",
+    category: "치킨",
+    emoji: "🍗",
+    theme: "chicken",
+    minimumOrder: 18000,
+    menu: [
+      { id: "original-chicken", name: "후라이드 치킨", price: 18000 },
+      { id: "seasoned-chicken", name: "양념 치킨", price: 20000 },
+      { id: "cheese-balls", name: "치즈볼", price: 5000 },
+      { id: "cola", name: "콜라", price: 2000 }
+    ]
+  },
+  {
+    id: "yeonnam-pizza",
+    name: "연남 피자",
+    category: "피자",
+    emoji: "🍕",
+    theme: "pizza",
+    minimumOrder: 22000,
+    menu: [
+      { id: "cheese-pizza", name: "치즈 피자", price: 22000 },
+      { id: "pepperoni-pizza", name: "페퍼로니 피자", price: 25000 },
+      { id: "garlic-bread", name: "갈릭 브레드", price: 5000 },
+      { id: "soda", name: "탄산음료", price: 2000 }
+    ]
+  },
+  {
+    id: "hongdae-tteokbokki",
+    name: "홍대 분식집",
+    category: "분식",
+    emoji: "🍡",
+    theme: "tteok",
+    minimumOrder: 15000,
+    menu: [
+      { id: "tteokbokki", name: "떡볶이", price: 12000 },
+      { id: "fried-snacks", name: "모둠 튀김", price: 7000 },
+      { id: "rice-roll", name: "참치 김밥", price: 5000 },
+      { id: "fish-cake", name: "어묵탕", price: 6000 }
+    ]
+  }
+];
 const pageContent = document.querySelector("#pageContent");
 const toast = document.querySelector("#toast");
 const modalBackdrop = document.querySelector("#modalBackdrop");
@@ -30,6 +74,7 @@ function mapRecruitmentPost(row) {
   return {
     id: row.id,
     ownerId: row.owner_id,
+    restaurantId: row.restaurant_id,
     restaurant: row.restaurant,
     emoji: row.emoji,
     theme: row.theme,
@@ -39,6 +84,7 @@ function mapRecruitmentPost(row) {
     max: row.max_participants,
     minimum: row.minimum_amount,
     amount: row.current_amount,
+    selectedMenu: row.selected_menu || [],
     deadline: row.deadline,
     leader: row.leader,
     rating: String(row.rating),
@@ -84,6 +130,36 @@ const avatar = (name, large = false) => `<span class="avatar ${large ? "avatar-l
 const currentUserName = () => authState.user ? authDisplayName() : "게스트";
 const participantName = (name) => name === "서연" ? currentUserName() : name;
 const isPostOwner = (post) => post.ownerId === (authState.user?.id || "guest");
+
+function menuSelectionMarkup(restaurantId) {
+  const restaurant = restaurantCatalog.find((entry) => entry.id === restaurantId);
+  if (!restaurant) return `<p class="subheading">먼저 음식점을 선택해 주세요.</p>`;
+  return restaurant.menu.map((item) => `<label class="menu-choice">
+    <span><strong>${escapeHTML(item.name)}</strong><small>${won(item.price)}</small></span>
+    <input type="number" name="menu-${escapeHTML(item.id)}" data-menu-id="${escapeHTML(item.id)}" data-menu-name="${escapeHTML(item.name)}" data-menu-price="${item.price}" min="0" max="10" value="0" aria-label="${escapeHTML(item.name)} 수량" />
+  </label>`).join("");
+}
+
+function updateCreateOrderSummary(form) {
+  const summary = form.querySelector("#orderSummary");
+  const restaurant = restaurantCatalog.find((entry) => entry.id === form.elements.restaurantId.value);
+  if (!restaurant) {
+    summary.innerHTML = `<span>음식점을 선택하면 최소주문금액을 확인할 수 있어요.</span>`;
+    return;
+  }
+  const menu = [...form.querySelectorAll("[data-menu-id]")]
+    .map((input) => ({
+      id: input.dataset.menuId,
+      name: input.dataset.menuName,
+      price: Number(input.dataset.menuPrice),
+      quantity: Number(input.value)
+    }))
+    .filter((item) => Number.isInteger(item.quantity) && item.quantity > 0);
+  const total = menu.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  summary.innerHTML = `<div><span>선택 메뉴 합계</span><strong>${won(total)}</strong></div>
+    <div><span>식당 최소주문금액</span><strong>${won(restaurant.minimumOrder)}</strong></div>
+    <div><span>최소주문까지</span><strong class="money-need">${won(Math.max(restaurant.minimumOrder - total, 0))} 남음</strong></div>`;
+}
 
 function showToast(message) {
   toast.textContent = message;
@@ -174,6 +250,7 @@ function detailPage() {
     <div class="detail-layout"><section class="page-card">
       <div class="detail-food"><div class="food-thumb ${escapeHTML(post.theme)}">${escapeHTML(post.emoji)}</div><div><span class="tag">${escapeHTML(post.category)}</span><h2>${escapeHTML(post.restaurant)}</h2><p>⌖ 내 위치에서 ${post.distance}m · 배달 예정 약 40분</p></div></div>
       <div class="detail-stats"><div class="detail-stat"><small>모집 인원</small><strong>${post.joined} / ${post.max}명</strong></div><div class="detail-stat"><small>최소주문금액</small><strong>${won(post.minimum)}</strong></div><div class="detail-stat"><small>현재 주문금액</small><strong>${won(post.amount)}</strong></div></div>
+      ${post.selectedMenu?.length ? `<div class="detail-block"><h3>선택한 메뉴</h3>${post.selectedMenu.map((item) => `<p>${escapeHTML(item.name)} × ${item.quantity} · ${won(item.price * item.quantity)}</p>`).join("")}</div>` : ""}
       <div class="detail-block"><h3>리더의 한마디</h3><p>${escapeHTML(post.note)}</p></div>
       <div class="detail-block"><h3>모집 안내</h3><p>모집 마감 ${escapeHTML(post.deadline)}<br />메뉴는 매칭 후 공동 채팅방에서 함께 정해요. 만남 장소와 수령 시간도 채팅으로 편하게 조율할 수 있어요.</p></div>
     </section><aside class="page-card"><div class="section-title"><h2>리더 정보</h2><button class="text-button" data-action="leader-profile">프로필 보기</button></div>
@@ -191,11 +268,10 @@ function createPage() {
   return `<div class="page-heading"><div><div class="eyebrow">START A GROUP ORDER</div><h1>모집글 만들기</h1><p class="subheading">함께 먹을 이웃을 찾아볼까요?</p></div><button class="secondary-button" data-page="discover">← 돌아가기</button></div>
     <section class="page-card"><div class="section-title"><h2>주문 정보를 입력해 주세요</h2><span class="subheading">* 필수 입력 항목</span></div>
       <form id="createForm"><div class="form-grid">
-        <div class="form-field full"><label for="restaurant">음식점 이름 *</label><input id="restaurant" name="restaurant" required placeholder="예: 연남동 치킨 맛집" /></div>
-        <div class="form-field"><label for="category">음식 카테고리 *</label><select id="category" name="category" required><option value="">선택해 주세요</option>${categories.slice(1).map((item) => `<option>${item}</option>`).join("")}</select></div>
+        <div class="form-field full"><label for="restaurantId">음식점 *</label><select id="restaurantId" name="restaurantId" required><option value="">음식점을 선택해 주세요</option>${restaurantCatalog.map((restaurant) => `<option value="${restaurant.id}">${restaurant.emoji} ${restaurant.name} · 최소 ${won(restaurant.minimumOrder)}</option>`).join("")}</select></div>
+        <div class="form-field full"><label>메뉴와 수량 *</label><div id="menuSelection" class="menu-selection"><p class="subheading">먼저 음식점을 선택해 주세요.</p></div></div>
+        <div class="form-field full"><label>주문 금액</label><div id="orderSummary" class="order-summary"><span>음식점을 선택하면 최소주문금액을 확인할 수 있어요.</span></div></div>
         <div class="form-field"><label for="members">모집 인원 *</label><select id="members" name="members"><option>2명</option><option selected>3명</option><option>4명</option><option>5명</option></select></div>
-        <div class="form-field"><label for="minimum">최소주문금액 *</label><input id="minimum" name="minimum" type="number" min="0" required placeholder="예: 25000" /></div>
-        <div class="form-field"><label for="current">현재 주문금액</label><input id="current" name="current" type="number" min="0" placeholder="예: 12000" /></div>
         <div class="form-field"><label for="deadline">모집 마감 시간 *</label><select id="deadline" name="deadline"><option>15분 후</option><option>30분 후</option><option>1시간 후</option><option>직접 설정</option></select></div>
         <div class="form-field"><label for="deliveryTime">희망 배달 시간</label><input id="deliveryTime" name="deliveryTime" type="time" /></div>
         <div class="form-field full"><label for="note">기타 전달사항</label><textarea id="note" name="note" placeholder="메뉴나 만남 장소에 관한 내용을 적어주세요."></textarea></div>
@@ -750,9 +826,20 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  if (event.target.id === "restaurantId") {
+    const form = event.target.form;
+    form.querySelector("#menuSelection").innerHTML = menuSelectionMarkup(event.target.value);
+    updateCreateOrderSummary(form);
+  }
   if (event.target.matches(".sort-select")) {
     sortBy = event.target.value;
     render();
+  }
+});
+
+document.addEventListener("input", (event) => {
+  if (event.target.matches("#menuSelection [data-menu-id]")) {
+    updateCreateOrderSummary(event.target.form);
   }
 });
 
@@ -770,17 +857,37 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     const form = new FormData(event.target);
+    const selectedRestaurant = restaurantCatalog.find((restaurant) => restaurant.id === form.get("restaurantId"));
+    if (!selectedRestaurant) {
+      showToast("음식점을 선택해 주세요.");
+      return;
+    }
+    const selectedMenu = [...event.target.querySelectorAll("[data-menu-id]")]
+      .map((input) => ({
+        id: input.dataset.menuId,
+        name: input.dataset.menuName,
+        price: Number(input.dataset.menuPrice),
+        quantity: Number(input.value)
+      }))
+      .filter((item) => Number.isInteger(item.quantity) && item.quantity > 0);
+    if (!selectedMenu.length || selectedMenu.some((item) => item.quantity > 10)) {
+      showToast("메뉴를 하나 이상 선택하고 수량을 확인해 주세요.");
+      return;
+    }
+    const currentAmount = selectedMenu.reduce((sum, item) => sum + item.price * item.quantity, 0);
     const payload = {
       owner_id: authState.user.id,
-      restaurant: String(form.get("restaurant")).trim(),
-      emoji: categoryIcons[form.get("category")] || "🍽️",
-      theme: "chicken",
-      category: String(form.get("category")),
+      restaurant_id: selectedRestaurant.id,
+      restaurant: selectedRestaurant.name,
+      emoji: selectedRestaurant.emoji,
+      theme: selectedRestaurant.theme,
+      category: selectedRestaurant.category,
       distance_meters: 90,
       joined: 1,
       max_participants: Number.parseInt(String(form.get("members")), 10),
-      minimum_amount: Number(form.get("minimum")),
-      current_amount: Number(form.get("current") || 0),
+      minimum_amount: selectedRestaurant.minimumOrder,
+      current_amount: currentAmount,
+      selected_menu: selectedMenu,
       deadline: `${form.get("deadline")} 마감`,
       leader: currentUserName(),
       rating: 4.8,

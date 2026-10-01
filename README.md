@@ -36,6 +36,7 @@ Supabase 프로젝트를 만들고 **Project Settings → API**에서 Project UR
 create table if not exists public.recruitment_posts (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
+  restaurant_id text not null default '',
   restaurant text not null,
   emoji text not null,
   theme text not null default 'chicken',
@@ -45,6 +46,7 @@ create table if not exists public.recruitment_posts (
   max_participants integer not null,
   minimum_amount integer not null,
   current_amount integer not null default 0,
+  selected_menu jsonb not null default '[]'::jsonb,
   deadline text not null,
   leader text not null,
   rating numeric not null default 4.8,
@@ -81,7 +83,9 @@ grant select on public.recruitment_posts to anon, authenticated;
 grant insert, update, delete on public.recruitment_posts to authenticated;
 ```
 
-신청자가 모집글에서 동참 신청을 누르면 Supabase에 대기 신청이 저장됩니다. 모집글 소유자는 **신청자 관리**에서 신청을 승인하거나 거절할 수 있고, 승인은 정원도 원자적으로 확인해 갱신합니다. 신청자는 대기 중인 신청을 취소할 수 있습니다. 신청/승인 후 채팅 초대와 결제 분담액 연동은 아직 데모 기능입니다.
+기존에 `recruitment_posts` 테이블을 이미 만들었다면 SQL Editor에서 [`supabase/recruitment-menu-columns.sql`](./supabase/recruitment-menu-columns.sql)도 실행해 메뉴 저장용 컬럼을 추가하세요. 앱의 음식점·메뉴·최소주문금액은 현재 테스트용 목록으로 제공되며, 실제 배달 플랫폼이나 음식점 메뉴 API와 연동된 것은 아닙니다.
+
+모집글 작성에서 음식점을 선택하면 테스트 목록의 메뉴와 수량을 고를 수 있고, 메뉴 가격으로 주문 합계를 계산합니다. 선택한 음식점의 최소주문금액은 자동 반영되며, 합계와 최소주문금액의 차액도 바로 표시됩니다. 신청자가 모집글에서 동참 신청을 누르면 Supabase에 대기 신청이 저장됩니다. 모집글 소유자는 **신청자 관리**에서 신청을 승인하거나 거절할 수 있고, 승인은 정원도 원자적으로 확인해 갱신합니다. 신청자는 대기 중인 신청을 취소할 수 있습니다. 신청/승인 후 채팅 초대와 결제 분담액 연동은 아직 데모 기능입니다.
 
 ### 가상계좌 환불 필수 설정
 
