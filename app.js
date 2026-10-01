@@ -1,5 +1,6 @@
 const posts = [];
 const applications = [];
+const menuSelections = [];
 
 const categories = ["전체", "치킨", "피자", "한식", "중식", "일식", "양식", "분식"];
 const categoryIcons = { 전체: "✦", 치킨: "🍗", 피자: "🍕", 한식: "🍚", 중식: "🥟", 일식: "🍣", 양식: "🍔", 분식: "🍡" };
@@ -115,9 +116,23 @@ async function loadApplications() {
   applications.push(...data);
 }
 
+async function loadMenuSelections() {
+  menuSelections.splice(0, menuSelections.length);
+  if (!authState.client || !authState.user) return;
+  const { data, error } = await authState.client
+    .from("recruitment_menu_selections")
+    .select("application_id, post_id, applicant_name, selected_menu, amount")
+    .order("updated_at", { ascending: true });
+  if (error) throw error;
+  menuSelections.push(...data);
+}
+
 async function refreshRecruitmentData() {
   await loadRecruitmentPosts();
   await loadApplications();
+  await loadMenuSelections();
+  if (selectedPost) selectedPost = posts.find((post) => post.id === selectedPost.id) || null;
+  if (currentPage === "detail" && !selectedPost) currentPage = "discover";
   render();
 }
 
@@ -131,13 +146,33 @@ const currentUserName = () => authState.user ? authDisplayName() : "게스트";
 const participantName = (name) => name === "서연" ? currentUserName() : name;
 const isPostOwner = (post) => post.ownerId === (authState.user?.id || "guest");
 
-function menuSelectionMarkup(restaurantId) {
+function menuSelectionMarkup(restaurantId, selectedItems = []) {
   const restaurant = restaurantCatalog.find((entry) => entry.id === restaurantId);
   if (!restaurant) return `<p class="subheading">먼저 음식점을 선택해 주세요.</p>`;
   return restaurant.menu.map((item) => `<label class="menu-choice">
     <span><strong>${escapeHTML(item.name)}</strong><small>${won(item.price)}</small></span>
-    <input type="number" name="menu-${escapeHTML(item.id)}" data-menu-id="${escapeHTML(item.id)}" data-menu-name="${escapeHTML(item.name)}" data-menu-price="${item.price}" min="0" max="10" value="0" aria-label="${escapeHTML(item.name)} 수량" />
+    <input type="number" name="menu-${escapeHTML(item.id)}" data-menu-id="${escapeHTML(item.id)}" data-menu-name="${escapeHTML(item.name)}" data-menu-price="${item.price}" min="0" max="10" value="${selectedItems.find((selected) => selected.id === item.id)?.quantity || 0}" aria-label="${escapeHTML(item.name)} 수량" />
   </label>`).join("");
+}
+
+function participantMenuFormMarkup(post, application) {
+  if (!restaurantCatalog.some((restaurant) => restaurant.id === post.restaurantId)) {
+    return `<div class="participant-menu"><h3>내 메뉴 선택</h3><p class="subheading">이 모집글은 메뉴 선택 기능이 추가되기 전에 등록되어 메뉴 선택을 지원하지 않습니다.</p></div>`;
+  }
+  const selection = menuSelections.find((item) => item.application_id === application.id);
+  return `<form id="participantMenuForm" class="participant-menu">
+    <h3>내 메뉴 선택</h3><p class="subheading">신청이 승인됐어요. 메뉴와 수량을 선택해 주문에 추가하세요.</p>
+    <div class="menu-selection">${menuSelectionMarkup(post.restaurantId, selection?.selected_menu || [])}</div>
+    <div class="participant-menu-total">내 메뉴 합계 <strong id="participantMenuTotal">${won(selection?.amount || 0)}</strong></div>
+    <button class="primary-button" type="submit">내 메뉴 저장</button>
+  </form>`;
+}
+
+function participantOrdersMarkup(post) {
+  const selections = menuSelections.filter((selection) => selection.post_id === post.id);
+  return `<div class="detail-block"><h3>참가자 메뉴</h3>${selections.length
+    ? selections.map((selection) => `<div class="participant-order"><strong>${escapeHTML(selection.applicant_name)}</strong>${selection.selected_menu.map((item) => `<p>${escapeHTML(item.name)} × ${item.quantity} · ${won(item.price * item.quantity)}</p>`).join("")}</div>`).join("")
+    : `<p>승인된 참가자가 메뉴를 선택하면 여기에 표시돼요.</p>`}</div>`;
 }
 
 function updateCreateOrderSummary(form) {
@@ -159,6 +194,12 @@ function updateCreateOrderSummary(form) {
   summary.innerHTML = `<div><span>선택 메뉴 합계</span><strong>${won(total)}</strong></div>
     <div><span>식당 최소주문금액</span><strong>${won(restaurant.minimumOrder)}</strong></div>
     <div><span>최소주문까지</span><strong class="money-need">${won(Math.max(restaurant.minimumOrder - total, 0))} 남음</strong></div>`;
+}
+
+function updateParticipantMenuTotal(form) {
+  const total = [...form.querySelectorAll("[data-menu-id]")]
+    .reduce((sum, input) => sum + Number(input.dataset.menuPrice) * Number(input.value), 0);
+  form.querySelector("#participantMenuTotal").textContent = won(total);
 }
 
 function showToast(message) {
@@ -251,14 +292,16 @@ function detailPage() {
       <div class="detail-food"><div class="food-thumb ${escapeHTML(post.theme)}">${escapeHTML(post.emoji)}</div><div><span class="tag">${escapeHTML(post.category)}</span><h2>${escapeHTML(post.restaurant)}</h2><p>⌖ 내 위치에서 ${post.distance}m · 배달 예정 약 40분</p></div></div>
       <div class="detail-stats"><div class="detail-stat"><small>모집 인원</small><strong>${post.joined} / ${post.max}명</strong></div><div class="detail-stat"><small>최소주문금액</small><strong>${won(post.minimum)}</strong></div><div class="detail-stat"><small>현재 주문금액</small><strong>${won(post.amount)}</strong></div></div>
       ${post.selectedMenu?.length ? `<div class="detail-block"><h3>선택한 메뉴</h3>${post.selectedMenu.map((item) => `<p>${escapeHTML(item.name)} × ${item.quantity} · ${won(item.price * item.quantity)}</p>`).join("")}</div>` : ""}
+      ${(isOwner || applicationStatus === "approved") ? participantOrdersMarkup(post) : ""}
+      ${!isOwner && applicationStatus === "approved" ? participantMenuFormMarkup(post, myApplication) : ""}
       <div class="detail-block"><h3>리더의 한마디</h3><p>${escapeHTML(post.note)}</p></div>
-      <div class="detail-block"><h3>모집 안내</h3><p>모집 마감 ${escapeHTML(post.deadline)}<br />메뉴는 매칭 후 공동 채팅방에서 함께 정해요. 만남 장소와 수령 시간도 채팅으로 편하게 조율할 수 있어요.</p></div>
+      <div class="detail-block"><h3>모집 안내</h3><p>모집 마감 ${escapeHTML(post.deadline)}<br />승인된 참가자는 이 화면에서 메뉴를 선택할 수 있어요. 만남 장소와 수령 시간은 채팅으로 조율해요.</p></div>
     </section><aside class="page-card"><div class="section-title"><h2>리더 정보</h2><button class="text-button" data-action="leader-profile">프로필 보기</button></div>
       <div class="leader-card">${avatar(post.leader, true)}<div class="leader-info"><strong>${escapeHTML(post.leader)}</strong><small>따뜻한 한 끼를 함께해요</small></div></div>
       <div class="reputation-row"><div><strong><span class="star">★</span> ${post.rating}</strong>평점</div><div><strong>${post.trades}회</strong>거래 횟수</div><div><strong>100%</strong>매너 온도</div></div>
       <div class="detail-block"><h3>최소주문까지</h3><p style="color:#e68b5d;font-weight:700;font-size:15px">${won(Math.max(post.minimum - post.amount, 0))} 남았어요</p></div>
       ${isOwner
-        ? `<button class="primary-button" style="width:100%;margin-top:17px" data-page="applicants">신청자 관리</button><div class="join-note">내가 만든 모집글이에요. 신청할 수 없습니다.</div>`
+        ? `<button class="primary-button" style="width:100%;margin-top:17px" data-page="applicants">신청자 관리</button><button class="danger-button" style="width:100%;margin-top:9px" data-action="delete-post">모집글 삭제</button><div class="join-note">내가 만든 모집글이에요. 신청할 수 없습니다.</div>`
         : `<button class="primary-button" style="width:100%;margin-top:17px" data-action="apply" ${full || applicationStatus === "approved" || applicationStatus === "rejected" ? "disabled" : ""}>${applicationStatus === "pending" ? "신청 취소하기" : applicationStatus === "approved" ? "신청 승인됨" : applicationStatus === "rejected" ? "신청 거절됨" : !authState.user ? "로그인 후 신청" : full ? "모집 인원 마감" : "동참 신청하기"} <span>→</span></button>
       <div class="join-note">${applicationStatus === "pending" ? "리더의 승인을 기다리고 있어요." : applicationStatus === "approved" ? "모집자가 참여 신청을 승인했어요." : applicationStatus === "rejected" ? "이번 모집글 신청이 거절되었어요." : full ? "모집 인원이 모두 찼어요." : !authState.user ? "신청하려면 로그인해 주세요." : "신청 후 리더의 승인을 기다려요."}</div>`}
     </aside></div>`;
@@ -289,7 +332,7 @@ function applicantsPage() {
           ${postApplications.length
             ? postApplications.map((application) => `<div class="applicant-row"><span class="avatar">${escapeHTML(application.applicant_name.slice(0, 1))}</span><div class="applicant-copy"><strong>${escapeHTML(application.applicant_name)}</strong><small>${application.status === "pending" ? "참여 신청을 보냈어요." : application.status === "approved" ? "신청을 승인했어요." : "신청을 거절했어요."}</small></div><div class="applicant-actions">${application.status === "pending" ? `<button class="primary-button" data-action="review-application" data-application-id="${application.id}" data-decision="approved">승인</button><button class="secondary-button" data-action="review-application" data-application-id="${application.id}" data-decision="rejected">거절</button>` : `<span class="status-pill ${application.status === "approved" ? "status-paid" : "status-pending"}">${application.status === "approved" ? "승인됨" : "거절됨"}</span>`}</div></div>`).join("")
             : `<p class="subheading">아직 신청한 사람이 없어요.</p>`}
-          <button class="secondary-button" data-action="manage-owned-post" data-post-id="${post.id}">모집글 확인</button></article>`;
+          <div class="owned-post-actions"><button class="secondary-button" data-action="manage-owned-post" data-post-id="${post.id}">모집글 확인</button><button class="danger-button" data-action="delete-post" data-post-id="${post.id}">삭제</button></div></article>`;
       }).join("")}</section>`
       : `<section class="page-card"><div class="empty-state">아직 등록한 모집글이 없어요.<br />모집글을 만들면 이곳에서 신청자를 확인할 수 있어요.<br /><button class="primary-button" style="margin-top:16px" data-page="create">모집글 만들기</button></div></section>`}`;
 }
@@ -746,6 +789,79 @@ async function reviewApplication(applicationId, decision) {
   }
 }
 
+async function saveParticipantMenu(form) {
+  await authInitialization;
+  if (!authState.client || !authState.user || !selectedPost) {
+    showToast("메뉴를 저장하려면 로그인하고 모집글을 다시 열어 주세요.");
+    return;
+  }
+  const application = applications.find((item) =>
+    item.post_id === selectedPost.id
+    && item.applicant_id === authState.user.id
+    && item.status === "approved");
+  if (!application) {
+    showToast("메뉴 선택은 신청이 승인된 참가자만 할 수 있어요.");
+    return;
+  }
+  const inputs = [...form.querySelectorAll("[data-menu-id]")];
+  if (inputs.some((input) => !Number.isInteger(Number(input.value)) || Number(input.value) < 0 || Number(input.value) > 10)) {
+    showToast("메뉴 수량은 0개부터 10개까지 선택해 주세요.");
+    return;
+  }
+  const selectedMenu = inputs
+    .filter((input) => Number(input.value) > 0)
+    .map((input) => ({ id: input.dataset.menuId, quantity: Number(input.value) }));
+  const { error } = await authState.client.rpc("save_recruitment_menu_selection", {
+    p_application_id: application.id,
+    p_selected_menu: selectedMenu
+  });
+  if (error) {
+    showToast(`메뉴를 저장하지 못했습니다: ${error.message}`);
+    return;
+  }
+  try {
+    await refreshRecruitmentData();
+    showToast(`메뉴를 저장했어요. 현재 주문금액은 ${won(selectedPost?.amount || 0)}이에요.`);
+  } catch (error) {
+    showToast(`저장한 메뉴 정보를 새로고침하지 못했습니다: ${error.message}`);
+  }
+}
+
+async function deleteRecruitmentPost(postId = selectedPost?.id) {
+  await authInitialization;
+  if (!authState.client || !authState.user || !postId) {
+    showToast("모집글을 삭제하려면 로그인하고 다시 시도해 주세요.");
+    return;
+  }
+  const post = posts.find((item) => String(item.id) === String(postId));
+  if (!post || !isPostOwner(post)) {
+    showToast("내가 작성한 모집글만 삭제할 수 있어요.");
+    return;
+  }
+  if (!window.confirm(`'${post.restaurant}' 모집글을 삭제할까요? 신청 내역도 함께 삭제되며 되돌릴 수 없습니다.`)) return;
+
+  const { data, error } = await authState.client.rpc("delete_recruitment_post", {
+    p_post_id: post.id
+  });
+  if (error) {
+    showToast(`모집글을 삭제하지 못했습니다: ${error.message}`);
+    return;
+  }
+  if (!data) {
+    showToast("모집글을 삭제하지 못했어요. 작성자 권한을 확인해 주세요.");
+    return;
+  }
+
+  selectedPost = null;
+  setPage("discover");
+  try {
+    await refreshRecruitmentData();
+    showToast("모집글과 해당 신청 내역을 삭제했어요.");
+  } catch (error) {
+    showToast(`삭제했지만 목록을 새로고침하지 못했습니다: ${error.message}`);
+  }
+}
+
 function closeModal() {
   modalBackdrop.hidden = true;
 }
@@ -783,6 +899,12 @@ document.addEventListener("click", (event) => {
       void reviewApplication(target.dataset.applicationId, target.dataset.decision).catch((error) => {
         console.error("Application review error:", error.message);
         showToast(`신청을 처리하지 못했습니다: ${error.message}`);
+      });
+      break;
+    case "delete-post":
+      void deleteRecruitmentPost(target.dataset.postId).catch((error) => {
+        console.error("Recruitment post deletion error:", error.message);
+        showToast(`모집글을 삭제하지 못했습니다: ${error.message}`);
       });
       break;
     case "refresh": showToast("현재 위치 주변의 모집글을 보여드리고 있어요."); break;
@@ -841,11 +963,19 @@ document.addEventListener("input", (event) => {
   if (event.target.matches("#menuSelection [data-menu-id]")) {
     updateCreateOrderSummary(event.target.form);
   }
+  if (event.target.matches("#participantMenuForm [data-menu-id]")) {
+    updateParticipantMenuTotal(event.target.form);
+  }
 });
 
 document.addEventListener("submit", async (event) => {
   if (event.target.id === "authForm") {
     await submitAuthForm(event);
+    return;
+  }
+  if (event.target.id === "participantMenuForm") {
+    event.preventDefault();
+    await saveParticipantMenu(event.target);
     return;
   }
   if (event.target.id === "createForm") {
