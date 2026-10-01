@@ -196,6 +196,23 @@ function updateDeadlineCountdowns() {
     element.classList.toggle("deadline-expired", expired);
   });
   if (deadlineJustExpired && ["detail", "applicants", "delivery"].includes(currentPage)) render();
+  updatePaymentCountdown();
+}
+
+function updatePaymentCountdown() {
+  const timer = document.querySelector("[data-payment-deadline]");
+  if (!timer) return;
+  const remaining = Date.parse(timer.dataset.paymentDeadline || "") - Date.now();
+  const expired = !Number.isFinite(remaining) || remaining <= 0;
+  if (expired) {
+    timer.textContent = "입금 시간 종료 · 취소/환불 처리 중";
+    timer.classList.add("deadline-expired");
+    return;
+  }
+  const minutes = Math.floor(remaining / 60_000);
+  const seconds = Math.floor((remaining % 60_000) / 1000);
+  timer.textContent = `남은 결제 시간 ${minutes}:${String(seconds).padStart(2, "0")}`;
+  timer.classList.toggle("deadline-expired", remaining <= 60_000);
 }
 
 const won = (value) => `${value.toLocaleString("ko-KR")}원`;
@@ -655,7 +672,7 @@ function paymentPage() {
       }).join("")}
       <div class="progress-track"><div class="progress-fill" style="width:${total ? Math.round((paidTotal / total) * 100) : 0}%"></div></div><div class="progress-caption"><span>입금 완료 금액 ${won(paidTotal)}</span><span>${total ? Math.round((paidTotal / total) * 100) : 0}%</span></div>
     </section><aside class="page-card"><div class="section-title"><h2>참여자별 가상계좌</h2><span class="tag">Toss 테스트</span></div><p class="subheading">본인 계좌만 발급·확인할 수 있으며, 실제 입금은 Toss 테스트 계좌에서 진행됩니다.</p>
-      <div class="account-info-box">${virtualAccountError ? `<strong>연동 설정이 필요해요</strong><span>${escapeHTML(virtualAccountError)}</span>` : paymentGroup?.status === "COLLECTING" ? `<strong>입금 마감 ${new Date(paymentGroup.deadlineAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</strong><span>첫 계좌 발급 후 5분 안에 전원이 입금하지 않으면 공동 주문을 취소하고 입금된 금액은 환불을 요청합니다.</span>` : paymentGroup?.status === "ORDER_READY" ? "<strong>모든 참여자의 입금이 완료됐어요</strong><span>배달 플랫폼 주문·배송 정보는 별도 연동이 필요합니다.</span>" : paymentGroup?.status === "CANCELLING" ? "<strong>공동배달 취소 처리 중</strong><span>미입금 계좌를 취소하고 입금된 금액의 환불을 요청하고 있어요.</span>" : paymentGroup?.status === "REFUND_ACTION_REQUIRED" ? "<strong>환불 계좌 확인이 필요해요</strong><span>토스 결제내역에서 입금 결제의 환불 정보를 확인해 주세요.</span>" : paymentGroup?.status === "REFUNDING" ? "<strong>공동배달이 취소됐어요</strong><span>환불을 요청했습니다. 은행 처리에는 영업일 기준 시간이 걸릴 수 있어요.</span>" : paymentGroup?.status === "CANCELED" ? "<strong>공동배달이 취소됐어요</strong><span>입금 마감까지 전원이 입금하지 않아 미입금 계좌를 취소했어요.</span>" : menusReady ? "<strong>개인별 메뉴 금액을 확인해 주세요</strong><span>첫 참여자가 계좌 발급을 시작하면 5분 입금 마감이 시작됩니다.</span>" : "<strong>메뉴 선택 대기 중</strong><span>모든 참여자가 메뉴를 선택한 후 계좌를 발급할 수 있습니다.</span>"}</div>
+      <div class="account-info-box">${virtualAccountError ? `<strong>연동 설정이 필요해요</strong><span>${escapeHTML(virtualAccountError)}</span>` : paymentGroup?.status === "COLLECTING" ? `<strong data-payment-deadline="${paymentGroup.deadlineAt}"></strong><span>첫 계좌 발급 후 5분 안에 전원이 입금하지 않으면 공동 주문을 취소하고 입금된 금액은 환불을 요청합니다.</span>` : paymentGroup?.status === "ORDER_READY" ? "<strong>모든 참여자의 입금이 완료됐어요</strong><span>배달 플랫폼 주문·배송 정보는 별도 연동이 필요합니다.</span>" : paymentGroup?.status === "CANCELLING" ? "<strong>공동배달 취소 처리 중</strong><span>미입금 계좌를 취소하고 입금된 금액의 환불을 요청하고 있어요.</span>" : paymentGroup?.status === "REFUND_ACTION_REQUIRED" ? "<strong>환불 계좌 확인이 필요해요</strong><span>토스 결제내역에서 입금 결제의 환불 정보를 확인해 주세요.</span>" : paymentGroup?.status === "REFUNDING" ? "<strong>공동배달이 취소됐어요</strong><span>환불을 요청했습니다. 은행 처리에는 영업일 기준 시간이 걸릴 수 있어요.</span>" : paymentGroup?.status === "CANCELED" ? "<strong>공동배달이 취소됐어요</strong><span>입금 마감까지 전원이 입금하지 않아 미입금 계좌를 취소했어요.</span>" : menusReady ? "<strong>개인별 메뉴 금액을 확인해 주세요</strong><span>첫 참여자가 계좌 발급을 시작하면 5분 입금 마감이 시작됩니다.</span>" : "<strong>메뉴 선택 대기 중</strong><span>모든 참여자가 메뉴를 선택한 후 계좌를 발급할 수 있습니다.</span>"}</div>
       <div class="account-info-box refund-notice"><strong>환불 계좌 안내</strong><span>자동 환불을 위해 Toss 결제창에서 환불 계좌 입력을 지원하도록 설정해야 합니다.</span></div>
     </aside></div>`;
 }
@@ -1420,6 +1437,7 @@ document.querySelector(".brand").addEventListener("click", (event) => { event.pr
 const initialPage = new URLSearchParams(window.location.search).get("page");
 const initialPostId = new URLSearchParams(window.location.search).get("postId");
 render();
+updateDeadlineCountdowns();
 window.setInterval(updateDeadlineCountdowns, 1000);
 authInitialization = initializeAuth().then(() => {
   if (initialPage === "payment" && authState.user) {
