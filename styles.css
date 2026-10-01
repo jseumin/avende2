@@ -250,6 +250,20 @@ h1 { font-size: 27px; letter-spacing: -1.1px; margin: 7px 0 5px; line-height: 1.
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 15px); background: #252a30; color: white; font-size: 11px; border-radius: 8px; padding: 12px 17px; opacity: 0; pointer-events: none; transition: .22s; z-index: 20; box-shadow: 0 8px 25px #20232b30; }
 .toast.visible { opacity: 1; transform: translate(-50%, 0); }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(30,36,34,.35); display: grid; place-items: center; padding: 20px; z-index: 10; }
+.account-card { margin-bottom: 15px; }
+.modal #authForm { display: grid; gap: 12px; }
+.modal #authForm .form-field { margin-top: 3px; }
+.auth-message { min-height: 16px; color: var(--green-dark); font-size: 11px; line-height: 1.5; }
+.auth-message.auth-error, .auth-error { color: #c2413b; }
+.modal p.auth-error { color: #c2413b; }
+.auth-hint { color: var(--muted); }
+.auth-links { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 15px; color: var(--muted); font-size: 10px; }
+.auth-links .text-button { padding: 0; font-size: 10px; }
+.auth-account-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.auth-account-row > div { display: grid; gap: 5px; min-width: 0; }
+.auth-account-row strong { font-size: 12px; }
+.auth-account-row small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.modal #authSubmit:disabled { opacity: .65; cursor: wait; }
 .modal-backdrop[hidden] { display: none; }
 .modal { width: min(450px, 100%); background: white; border-radius: 14px; padding: 25px; position: relative; box-shadow: 0 20px 70px #2223; max-height: 90vh; overflow: auto; }
 .modal-close { position: absolute; top: 11px; right: 14px; border: 0; background: transparent; font-size: 24px; color: #a3a8b0; }

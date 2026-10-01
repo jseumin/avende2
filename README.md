@@ -19,10 +19,18 @@ GitHub 저장소를 Vercel에 가져오고 Framework Preset은 `Other`, Root Dir
    - `QSTASH_URL` (QStash 대시보드 Quickstart의 `QSTASH_URL`, 예: `https://qstash-eu-central-1.upstash.io`)
    - `QSTASH_TOKEN`
    - `CRON_SECRET` (충분히 긴 임의의 비밀 문자열)
+   - `SUPABASE_URL`
+   - `SUPABASE_ANON_KEY` (publishable/anon 공개 키만 사용하고 service_role 키는 사용하지 마세요)
 4. Toss Payments 개발자센터의 **웹훅** 메뉴에서 이벤트 `가상계좌 입금 통보(DEPOSIT_CALLBACK)`를 등록합니다. URL은 `https://<배포 도메인>/api/toss-webhook`입니다.
 5. 사이트의 입금 현황에서 참여자별 `가상계좌 발급`을 눌러 토스 결제창을 엽니다. 결제창에서 가상계좌와 은행을 선택하면 서버가 결제를 승인하고 해당 참여자의 분담액 가상계좌를 발급합니다.
 6. 개발자센터의 테스트 결제 내역에서 해당 테스트 가상계좌를 입금 처리합니다. 웹훅의 secret과 토스 결제 상태·금액을 서버가 검증한 뒤 입금 상태를 갱신합니다.
 7. Upstash QStash Quickstart에서 `QSTASH_URL`과 Token을 확인해 각각 `QSTASH_URL`, `QSTASH_TOKEN`에 넣고, `CRON_SECRET`에는 충분히 긴 임의의 비밀 문자열을 설정합니다. QStash URL은 선택한 리전에 맞는 값을 사용합니다. 첫 참여자가 가상계좌 발급을 시작한 시점부터 1시간이 공동 입금 마감입니다. 전원이 입금하면 주문 준비 상태가 되고, 한 명이라도 미입금이면 `/api/expire-group`이 미입금 계좌를 취소하고 입금된 결제는 환불을 요청합니다. 환불 계좌 정보가 없는 결제는 자동 취소하지 않고 확인 필요 상태로 남깁니다.
+
+### 이메일 로그인 설정
+
+Supabase 프로젝트를 만들고 **Project Settings → API**에서 Project URL과 publishable/anon 키를 확인해 Vercel 환경 변수 `SUPABASE_URL`, `SUPABASE_ANON_KEY`에 등록합니다. service_role 키는 절대 브라우저나 환경 변수 응답에 사용하지 마세요. Supabase의 **Authentication → Providers → Email**에서 이메일 로그인을 켜고, **Authentication → URL Configuration**의 Site URL에 배포 도메인을 입력합니다. Redirect URLs에도 이메일 인증과 비밀번호 재설정에 사용할 배포 주소를 추가합니다. Vercel 환경 변수 등록 후 재배포하면 로그인, 회원가입, 이메일 인증, 로그아웃, 비밀번호 재설정 화면이 활성화됩니다.
+
+로그인 세션은 Supabase SDK가 브라우저에 유지합니다. 현재 모집글·채팅·프로필 활동은 데모 데이터이며 사용자 계정별 서버 저장, 접근 제어, 사용자 데이터베이스 연결은 포함하지 않습니다.
 
 ### 가상계좌 환불 필수 설정
 
@@ -34,4 +42,4 @@ GitHub 저장소를 Vercel에 가져오고 Framework Preset은 `Other`, Root Dir
 
 ## 범위 및 실서비스 전환 전 필수 작업
 
-현재 서버는 데모 공동배달 ID와 고정 참여자만 허용하고 테스트 API 키만 받습니다. 자동 취소·환불 흐름은 새 데모 ID를 사용하므로 이전 테스트의 Redis 기록과 분리됩니다. 실제 사용자 인증·권한 확인, 모집/주문 데이터베이스 연동, 사용자별 부담액 계산, 분쟁 처리, 가상계좌 정산 및 서비스 운영에 필요한 Toss 계약·심사는 포함하지 않습니다. 가상계좌 한 건은 한 참여자의 결제이므로 참여자별로 발급됩니다. 테스트 키를 실서비스 키로 바꾸는 것만으로 실서비스 전환이 되지 않습니다.
+이메일 인증은 Supabase Auth를 사용하지만, 서버에서의 사용자 권한 확인, 모집/주문 데이터베이스 연동, 사용자별 부담액 계산, 분쟁 처리, 가상계좌 정산 및 서비스 운영에 필요한 Toss 계약·심사는 포함하지 않습니다. 서버는 데모 공동배달 ID와 고정 참여자만 허용하고 Toss 테스트 API 키만 받습니다. 자동 취소·환불 흐름은 새 데모 ID를 사용하므로 이전 테스트의 Redis 기록과 분리됩니다. 가상계좌 한 건은 한 참여자의 결제이므로 참여자별로 발급됩니다. 테스트 키를 실서비스 키로 바꾸는 것만으로 실서비스 전환이 되지 않습니다.

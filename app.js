@@ -26,6 +26,9 @@ const virtualAccounts = new Map();
 let virtualAccountError = "";
 let accountRefreshTimer = null;
 let paymentGroup = null;
+let authInitialization = Promise.resolve();
+let passwordRecoveryShown = false;
+const authState = { client: null, user: null, error: "" };
 const paymentParticipants = [{ name: "민지", amount: 15000 }, { name: "서연", amount: 9000 }, { name: "유진", amount: 8000 }];
 const demoGroupId = "demo-group-auto-refund-01";
 const bankNames = { "06": "KB국민은행", "11": "NH농협은행", "20": "우리은행", "81": "하나은행", "88": "신한은행" };
@@ -306,6 +309,7 @@ function deliveryPage() {
 
 function profilePage() {
   return `<div class="page-heading"><div><div class="eyebrow">YOUR NEIGHBOR PROFILE</div><h1>내 프로필</h1><p class="subheading">함께한 이웃이 남긴 따뜻한 기록이에요.</p></div><button class="secondary-button" data-action="edit-profile">프로필 수정</button></div>
+    <section class="page-card account-card"><div class="section-title"><h2>로그인 계정</h2></div><div id="profileAuthDetails">${authAccountMarkup()}</div></section>
     <section class="page-card"><div class="profile-hero">${avatar("서연", true)}<div><h2>서연 <span class="tag">매너 온도 38.5°</span></h2><p>연남동 이웃 · 모아먹자와 함께한 지 3개월</p></div></div><div class="profile-numbers"><div><strong><span class="star">★</span> 4.8</strong>평균 별점</div><div><strong>23회</strong>공동배달</div><div><strong>18개</strong>받은 후기</div></div></section>
     <section class="page-card" style="margin-top:15px"><div class="section-title"><h2>이웃들의 후기 <span>최근순</span></h2></div>
       <div class="review-item"><strong style="font-size:11px">민지 <span class="star">★★★★★</span></strong><p>약속 시간 잘 지켜주시고, 메뉴도 미리 정리해 주셔서 편했어요. 다음에도 같이 먹어요!</p><small>치킨 같이 먹어요 · 2026.09.20</small></div>
@@ -322,6 +326,195 @@ function render() {
 function openModal(content) {
   modalContent.innerHTML = content;
   modalBackdrop.hidden = false;
+}
+
+function authDisplayName() {
+  const metadataName = authState.user?.user_metadata?.display_name;
+  return typeof metadataName === "string" && metadataName.trim()
+    ? metadataName.trim()
+    : authState.user?.email?.split("@")[0] || "이웃";
+}
+
+function authAccountMarkup() {
+  if (!authState.user) {
+    return `<p class="subheading">이메일로 로그인하면 계정을 연결할 수 있어요.</p><button class="primary-button" data-action="auth-open">이메일로 로그인</button>`;
+  }
+  return `<div class="auth-account-row"><div><strong>${escapeHTML(authDisplayName())}</strong><small>${escapeHTML(authState.user.email || "")}</small></div><button class="secondary-button" data-action="auth-logout">로그아웃</button></div>`;
+}
+
+function updateAuthUI() {
+  const name = authState.user ? authDisplayName() : "게스트";
+  const authButton = document.querySelector("#authButton");
+  if (authButton) {
+    authButton.textContent = authState.user ? "로그아웃" : "로그인";
+    authButton.dataset.action = authState.user ? "auth-logout" : "auth-open";
+  }
+  ["#sidebarUserName", "#topProfileName"].forEach((selector) => {
+    const element = document.querySelector(selector);
+    if (element) element.textContent = name;
+  });
+  ["#sidebarAvatar", "#topProfileAvatar"].forEach((selector) => {
+    const element = document.querySelector(selector);
+    if (element) element.textContent = name.slice(0, 1);
+  });
+  const detail = document.querySelector("#sidebarUserDetail");
+  if (detail) detail.textContent = authState.user?.email || "로그인하면 계정을 연결해요";
+  const profileDetails = document.querySelector("#profileAuthDetails");
+  if (profileDetails) profileDetails.innerHTML = authAccountMarkup();
+}
+
+function showAuthModal(mode = "login") {
+  const setupError = authState.error
+    ? `<p class="auth-error" role="status">${escapeHTML(authState.error)}</p><p class="auth-hint">관리자는 Vercel에 SUPABASE_URL과 SUPABASE_ANON_KEY를 등록한 뒤 재배포해 주세요.</p>`
+    : "";
+  const signup = mode === "signup";
+  const reset = mode === "reset";
+  openModal(`<div class="eyebrow">MOAEAT ACCOUNT</div>
+    <h2 id="modalTitle">${signup ? "이메일로 회원가입" : reset ? "비밀번호 재설정" : "로그인"}</h2>
+    <p>${signup ? "이메일 인증을 마치면 계정이 만들어져요." : reset ? "가입한 이메일로 비밀번호 재설정 링크를 보내드려요." : "모아먹자 계정으로 로그인해 주세요."}</p>
+    ${setupError}
+    <form id="authForm" data-mode="${mode}">
+      ${signup ? `<div class="form-field"><label for="authName">닉네임</label><input id="authName" name="name" type="text" maxlength="40" autocomplete="nickname" required /></div>` : ""}
+      <div class="form-field"><label for="authEmail">이메일</label><input id="authEmail" name="email" type="email" autocomplete="email" required /></div>
+      ${reset ? "" : `<div class="form-field"><label for="authPassword">비밀번호</label><input id="authPassword" name="password" type="password" autocomplete="${signup ? "new-password" : "current-password"}" minlength="${signup ? "8" : "1"}" required /></div>`}
+      <div class="auth-message" id="authMessage" role="status" aria-live="polite"></div>
+      <button class="primary-button" id="authSubmit" type="submit">${signup ? "인증 메일 보내기" : reset ? "재설정 메일 보내기" : "로그인"}</button>
+    </form>
+    <div class="auth-links">${reset
+      ? `<button type="button" class="text-button" data-action="auth-mode-login">로그인으로 돌아가기</button>`
+      : signup
+        ? `<span>이미 계정이 있나요?</span><button type="button" class="text-button" data-action="auth-mode-login">로그인</button>`
+        : `<button type="button" class="text-button" data-action="auth-mode-reset">비밀번호를 잊으셨나요?</button><span>계정이 없나요?</span><button type="button" class="text-button" data-action="auth-mode-signup">회원가입</button>`}
+    </div>`);
+}
+
+function showPasswordUpdateModal() {
+  if (passwordRecoveryShown) return;
+  passwordRecoveryShown = true;
+  openModal(`<div class="eyebrow">PASSWORD RECOVERY</div><h2 id="modalTitle">새 비밀번호 설정</h2>
+    <p>계정에 사용할 새 비밀번호를 입력해 주세요.</p>
+    <form id="authForm" data-mode="update-password">
+      <div class="form-field"><label for="authPassword">새 비밀번호</label><input id="authPassword" name="password" type="password" autocomplete="new-password" minlength="8" required /></div>
+      <div class="form-field"><label for="authPasswordConfirm">새 비밀번호 확인</label><input id="authPasswordConfirm" name="passwordConfirm" type="password" autocomplete="new-password" minlength="8" required /></div>
+      <div class="auth-message" id="authMessage" role="status" aria-live="polite"></div>
+      <button class="primary-button" id="authSubmit" type="submit">비밀번호 변경</button>
+    </form>`);
+}
+
+async function initializeAuth() {
+  try {
+    const response = await fetch("/api/auth-config", { cache: "no-store" });
+    const config = await readApiResponse(response, "Supabase 인증 설정을 불러오지 못했습니다.");
+    if (!window.supabase?.createClient) throw new Error("인증 라이브러리를 불러오지 못했습니다. 페이지를 새로고침해 주세요.");
+    authState.client = window.supabase.createClient(config.url, config.anonKey, {
+      auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true }
+    });
+    const { data, error } = await authState.client.auth.getSession();
+    if (error) throw error;
+    authState.user = data.session?.user || null;
+    const isPasswordRecovery = new URLSearchParams(window.location.hash.slice(1)).get("type") === "recovery";
+    authState.client.auth.onAuthStateChange((event, session) => {
+      authState.user = session?.user || null;
+      updateAuthUI();
+      if (event === "PASSWORD_RECOVERY") showPasswordUpdateModal();
+    });
+    updateAuthUI();
+    if (isPasswordRecovery) showPasswordUpdateModal();
+  } catch (error) {
+    authState.error = error.message;
+    console.error("Supabase authentication initialization error:", error.message);
+    updateAuthUI();
+  }
+}
+
+async function submitAuthForm(event) {
+  event.preventDefault();
+  await authInitialization;
+  const form = event.target;
+  const message = form.querySelector("#authMessage");
+  const submit = form.querySelector("#authSubmit");
+  const mode = form.dataset.mode;
+  const values = new FormData(form);
+  const email = String(values.get("email") || "").trim();
+  const password = String(values.get("password") || "");
+  const setMessage = (text, isError = false) => {
+    message.textContent = text;
+    message.classList.toggle("auth-error", isError);
+  };
+  if (!authState.client) {
+    setMessage(authState.error || "인증 설정을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.", true);
+    return;
+  }
+
+  submit.disabled = true;
+  try {
+    if (mode === "signup") {
+      const name = String(values.get("name") || "").trim();
+      const { data, error } = await authState.client.auth.signUp({
+        email,
+        password,
+        options: { data: { display_name: name }, emailRedirectTo: window.location.origin }
+      });
+      if (error) throw error;
+      if (data.session) {
+        authState.user = data.session.user;
+        closeModal();
+        updateAuthUI();
+        showToast("회원가입과 로그인이 완료됐어요.");
+      } else {
+        setMessage("인증 메일을 보냈어요. 메일함에서 링크를 눌러 가입을 완료해 주세요.");
+        submit.disabled = false;
+      }
+    } else if (mode === "login") {
+      const { data, error } = await authState.client.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      authState.user = data.user;
+      closeModal();
+      updateAuthUI();
+      showToast("로그인했어요.");
+    } else if (mode === "reset") {
+      const { error } = await authState.client.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+      if (error) throw error;
+      setMessage("비밀번호 재설정 링크를 이메일로 보냈어요.");
+      submit.disabled = false;
+    } else if (mode === "update-password") {
+      const passwordConfirm = String(values.get("passwordConfirm") || "");
+      if (password !== passwordConfirm) {
+        setMessage("두 비밀번호가 일치하지 않습니다.", true);
+        submit.disabled = false;
+        return;
+      }
+      const { data, error } = await authState.client.auth.updateUser({ password });
+      if (error) throw error;
+      authState.user = data.user;
+      closeModal();
+      updateAuthUI();
+      showToast("비밀번호를 변경했어요.");
+    }
+  } catch (error) {
+    setMessage(error.message || "인증 요청을 완료하지 못했습니다. 다시 시도해 주세요.", true);
+    submit.disabled = false;
+  }
+}
+
+async function signOut() {
+  await authInitialization;
+  if (!authState.client) {
+    showToast(authState.error || "인증 설정을 불러오지 못했습니다.");
+    return;
+  }
+  try {
+    const { error } = await authState.client.auth.signOut();
+    if (error) {
+      showToast(`로그아웃하지 못했습니다: ${error.message}`);
+      return;
+    }
+    authState.user = null;
+    updateAuthUI();
+    showToast("로그아웃했어요.");
+  } catch (error) {
+    showToast(`로그아웃하지 못했습니다: ${error.message}`);
+  }
 }
 
 function closeModal() {
@@ -346,6 +539,11 @@ document.addEventListener("click", (event) => {
     return;
   }
   switch (target.dataset.action) {
+    case "auth-open": showAuthModal("login"); break;
+    case "auth-mode-login": showAuthModal("login"); break;
+    case "auth-mode-signup": showAuthModal("signup"); break;
+    case "auth-mode-reset": showAuthModal("reset"); break;
+    case "auth-logout": signOut(); break;
     case "refresh": showToast("현재 위치 주변의 모집글을 보여드리고 있어요."); break;
     case "apply":
       if (appliedPostId !== null && appliedPostId !== selectedPost.id) {
@@ -404,7 +602,11 @@ document.addEventListener("change", (event) => {
   }
 });
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
+  if (event.target.id === "authForm") {
+    await submitAuthForm(event);
+    return;
+  }
   if (event.target.id === "createForm") {
     event.preventDefault();
     const form = new FormData(event.target);
@@ -470,3 +672,4 @@ if (new URLSearchParams(window.location.search).get("page") === "payment") {
 } else {
   render();
 }
+authInitialization = initializeAuth();

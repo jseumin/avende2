@@ -32,8 +32,8 @@
             <button id="helpButton">이용 가이드 보기 <span>↗</span></button>
           </div>
           <button class="user-mini" data-page="profile">
-            <span class="avatar avatar-me">서</span>
-            <span class="user-mini-copy"><strong>서연</strong><small>매너 온도 38.5°</small></span>
+            <span class="avatar avatar-me" id="sidebarAvatar">서</span>
+            <span class="user-mini-copy"><strong id="sidebarUserName">게스트</strong><small id="sidebarUserDetail">로그인이 필요해요</small></span>
             <span class="more">···</span>
           </button>
         </div>
@@ -45,7 +45,8 @@
           <div class="location-pill"><span class="pin">⌖</span><span>서울시 마포구 <strong>연남동</strong></span><span class="chevron">⌄</span></div>
           <div class="topbar-right">
             <button class="icon-button notification" aria-label="알림">♧<i></i></button>
-            <button class="top-profile" data-page="profile"><span class="avatar avatar-me">서</span><span>서연</span><span class="chevron">⌄</span></button>
+            <button class="text-button" id="authButton" data-action="auth-open">로그인</button>
+            <button class="top-profile" id="topProfileButton" data-page="profile"><span class="avatar avatar-me" id="topProfileAvatar">게</span><span id="topProfileName">게스트</span><span class="chevron">⌄</span></button>
           </div>
         </header>
 
@@ -60,6 +61,7 @@
       </section>
     </div>
     <script defer src="https://js.tosspayments.com/v1/payment"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script defer src="app.js"></script>
   </body>
 </html>
