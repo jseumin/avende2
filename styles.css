@@ -264,6 +264,9 @@ h1 { font-size: 27px; letter-spacing: -1.1px; margin: 7px 0 5px; line-height: 1.
 .auth-account-row strong { font-size: 12px; }
 .auth-account-row small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .modal #authSubmit:disabled { opacity: .65; cursor: wait; }
+.owned-post-list { display: grid; gap: 14px; }
+.owned-post-card .applicant-row { margin: 0; }
+.owned-post-card > .secondary-button { margin-top: 12px; }
 .modal-backdrop[hidden] { display: none; }
 .modal { width: min(450px, 100%); background: white; border-radius: 14px; padding: 25px; position: relative; box-shadow: 0 20px 70px #2223; max-height: 90vh; overflow: auto; }
 .modal-close { position: absolute; top: 11px; right: 14px; border: 0; background: transparent; font-size: 24px; color: #a3a8b0; }

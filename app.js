@@ -1,4 +1,5 @@
 const posts = [];
+const applications = [];
 
 const categories = ["전체", "치킨", "피자", "한식", "중식", "일식", "양식", "분식"];
 const categoryIcons = { 전체: "✦", 치킨: "🍗", 피자: "🍕", 한식: "🍚", 중식: "🥟", 일식: "🍣", 양식: "🍔", 분식: "🍡" };
@@ -10,7 +11,6 @@ let currentPage = "discover";
 let selectedCategory = "전체";
 let sortBy = "distance";
 let selectedPost = null;
-let appliedPostId = null;
 let paid = new Set();
 let received = new Set(["민지", "유진"]);
 let rating = 0;
@@ -58,6 +58,23 @@ async function loadRecruitmentPosts() {
   posts.splice(0, posts.length, ...data.map(mapRecruitmentPost));
 }
 
+async function loadApplications() {
+  applications.splice(0, applications.length);
+  if (!authState.client || !authState.user) return;
+  const { data, error } = await authState.client
+    .from("recruitment_applications")
+    .select("id, post_id, applicant_id, applicant_name, status, created_at")
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  applications.push(...data);
+}
+
+async function refreshRecruitmentData() {
+  await loadRecruitmentPosts();
+  await loadApplications();
+  render();
+}
+
 const won = (value) => `${value.toLocaleString("ko-KR")}원`;
 const escapeHTML = (value) => String(value).replace(/[&<>"']/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -96,6 +113,12 @@ function setPage(page) {
   if (page === "payment") {
     refreshVirtualAccounts();
     accountRefreshTimer = window.setInterval(refreshVirtualAccounts, 8000);
+  }
+  if (page === "applicants" && authState.user) {
+    void loadApplications().then(render).catch((error) => {
+      console.error("Recruitment applications loading error:", error.message);
+      showToast(`신청자 정보를 불러오지 못했습니다: ${error.message}`);
+    });
   }
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -144,8 +167,8 @@ function discoverPage() {
 function detailPage() {
   const post = selectedPost;
   const isOwner = isPostOwner(post);
-  const isApplied = appliedPostId === post.id;
-  const blockedByOtherApplication = appliedPostId !== null && !isApplied;
+  const myApplication = applications.find((application) => application.post_id === post.id && application.applicant_id === authState.user?.id);
+  const applicationStatus = myApplication?.status || null;
   const full = post.joined >= post.max;
   return `<div class="page-heading"><div><div class="eyebrow">GROUP ORDER · ${post.distance}M AWAY</div><h1>모집글 상세</h1><p class="subheading">함께 주문할 이웃과 자세한 내용을 확인해요.</p></div><button class="secondary-button" data-page="discover">← 목록으로</button></div>
     <div class="detail-layout"><section class="page-card">
@@ -159,8 +182,8 @@ function detailPage() {
       <div class="detail-block"><h3>최소주문까지</h3><p style="color:#e68b5d;font-weight:700;font-size:15px">${won(Math.max(post.minimum - post.amount, 0))} 남았어요</p></div>
       ${isOwner
         ? `<button class="primary-button" style="width:100%;margin-top:17px" data-page="applicants">신청자 관리</button><div class="join-note">내가 만든 모집글이에요. 신청할 수 없습니다.</div>`
-        : `<button class="primary-button" style="width:100%;margin-top:17px" data-action="apply" ${blockedByOtherApplication || full ? "disabled" : ""}>${isApplied ? "신청 취소하기" : full ? "모집 인원 마감" : blockedByOtherApplication ? "다른 모집글 신청 중" : "동참 신청하기"} <span>→</span></button>
-      <div class="join-note">${isApplied ? "리더의 승인을 기다리고 있어요." : blockedByOtherApplication ? "신청을 취소하거나 거절된 후 다른 모집글에 신청할 수 있어요." : full ? "모집 인원이 모두 찼어요." : "신청 후 리더의 승인을 기다려요."}</div>`}
+        : `<button class="primary-button" style="width:100%;margin-top:17px" data-action="apply" ${full || applicationStatus === "approved" || applicationStatus === "rejected" ? "disabled" : ""}>${applicationStatus === "pending" ? "신청 취소하기" : applicationStatus === "approved" ? "신청 승인됨" : applicationStatus === "rejected" ? "신청 거절됨" : !authState.user ? "로그인 후 신청" : full ? "모집 인원 마감" : "동참 신청하기"} <span>→</span></button>
+      <div class="join-note">${applicationStatus === "pending" ? "리더의 승인을 기다리고 있어요." : applicationStatus === "approved" ? "모집자가 참여 신청을 승인했어요." : applicationStatus === "rejected" ? "이번 모집글 신청이 거절되었어요." : full ? "모집 인원이 모두 찼어요." : !authState.user ? "신청하려면 로그인해 주세요." : "신청 후 리더의 승인을 기다려요."}</div>`}
     </aside></div>`;
 }
 
@@ -184,7 +207,14 @@ function applicantsPage() {
   const myPosts = posts.filter(isPostOwner);
   return `<div class="page-heading"><div><div class="eyebrow">LEADER DASHBOARD</div><h1>신청자 관리</h1><p class="subheading">내가 올린 모집글의 신청자를 확인해요.</p></div><button class="secondary-button" data-page="discover">모집글 보기</button></div>
     ${myPosts.length
-      ? `<section class="post-grid">${myPosts.map((post) => `<article class="page-card owned-post-card"><div class="section-title"><h2>${escapeHTML(post.restaurant)}</h2><span class="tag">${escapeHTML(post.category)}</span></div><p class="subheading">${escapeHTML(post.deadline)} · 참여 ${post.joined} / ${post.max}명</p><p class="subheading">신청자 관리 기능은 준비 중이에요.</p><button class="secondary-button" data-action="manage-owned-post" data-post-id="${post.id}">모집글 확인</button></article>`).join("")}</section>`
+      ? `<section class="owned-post-list">${myPosts.map((post) => {
+        const postApplications = applications.filter((application) => application.post_id === post.id);
+        return `<article class="page-card owned-post-card"><div class="section-title"><h2>${escapeHTML(post.restaurant)}</h2><span class="tag">${escapeHTML(post.category)}</span></div><p class="subheading">${escapeHTML(post.deadline)} · 참여 ${post.joined} / ${post.max}명</p>
+          ${postApplications.length
+            ? postApplications.map((application) => `<div class="applicant-row"><span class="avatar">${escapeHTML(application.applicant_name.slice(0, 1))}</span><div class="applicant-copy"><strong>${escapeHTML(application.applicant_name)}</strong><small>${application.status === "pending" ? "참여 신청을 보냈어요." : application.status === "approved" ? "신청을 승인했어요." : "신청을 거절했어요."}</small></div><div class="applicant-actions">${application.status === "pending" ? `<button class="primary-button" data-action="review-application" data-application-id="${application.id}" data-decision="approved">승인</button><button class="secondary-button" data-action="review-application" data-application-id="${application.id}" data-decision="rejected">거절</button>` : `<span class="status-pill ${application.status === "approved" ? "status-paid" : "status-pending"}">${application.status === "approved" ? "승인됨" : "거절됨"}</span>`}</div></div>`).join("")
+            : `<p class="subheading">아직 신청한 사람이 없어요.</p>`}
+          <button class="secondary-button" data-action="manage-owned-post" data-post-id="${post.id}">모집글 확인</button></article>`;
+      }).join("")}</section>`
       : `<section class="page-card"><div class="empty-state">아직 등록한 모집글이 없어요.<br />모집글을 만들면 이곳에서 신청자를 확인할 수 있어요.<br /><button class="primary-button" style="margin-top:16px" data-page="create">모집글 만들기</button></div></section>`}`;
 }
 
@@ -452,6 +482,12 @@ async function initializeAuth() {
       authState.user = session?.user || null;
       updateAuthUI();
       if (event === "PASSWORD_RECOVERY") showPasswordUpdateModal();
+      if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "USER_UPDATED") {
+        void refreshRecruitmentData().catch((error) => {
+          console.error("Recruitment data refresh error:", error.message);
+          showToast(`모집글 정보를 불러오지 못했습니다: ${error.message}`);
+        });
+      }
     });
     updateAuthUI();
     if (isPasswordRecovery) showPasswordUpdateModal();
@@ -463,8 +499,7 @@ async function initializeAuth() {
   }
 
   try {
-    await loadRecruitmentPosts();
-    render();
+    await refreshRecruitmentData();
   } catch (error) {
     console.error("Recruitment posts loading error:", error.message);
     showToast(`모집글을 불러오지 못했습니다: ${error.message}`);
@@ -561,6 +596,80 @@ async function signOut() {
   }
 }
 
+async function applyToPost() {
+  await authInitialization;
+  if (!authState.client || !authState.user) {
+    showToast("신청하려면 먼저 로그인해 주세요.");
+    showAuthModal("login");
+    return;
+  }
+  if (isPostOwner(selectedPost)) {
+    showToast("내가 만든 모집글에는 동참 신청할 수 없어요.");
+    return;
+  }
+
+  const existing = applications.find((application) => application.post_id === selectedPost.id && application.applicant_id === authState.user.id);
+  if (existing?.status === "pending") {
+    const { error } = await authState.client
+      .from("recruitment_applications")
+      .delete()
+      .eq("id", existing.id);
+    if (error) {
+      showToast(`신청을 취소하지 못했습니다: ${error.message}`);
+      return;
+    }
+    showToast("신청을 취소했어요.");
+  } else if (existing?.status === "approved") {
+    showToast("이미 신청이 승인되었어요.");
+    return;
+  } else if (existing?.status === "rejected") {
+    showToast("이번 모집글 신청은 거절되었어요.");
+    return;
+  } else {
+    const { error } = await authState.client
+      .from("recruitment_applications")
+      .insert({
+        post_id: selectedPost.id,
+        applicant_id: authState.user.id,
+        applicant_name: currentUserName()
+      });
+    if (error) {
+      showToast(`신청을 보내지 못했습니다: ${error.message}`);
+      return;
+    }
+    showToast("참여 신청을 보냈어요. 모집자가 확인하면 결과가 반영됩니다.");
+  }
+
+  try {
+    await loadApplications();
+    render();
+  } catch (error) {
+    showToast(`신청 상태를 새로고침하지 못했습니다: ${error.message}`);
+  }
+}
+
+async function reviewApplication(applicationId, decision) {
+  if (!authState.client || !authState.user || !["approved", "rejected"].includes(decision)) {
+    showToast("신청을 처리할 수 없습니다. 로그인 상태를 확인해 주세요.");
+    return;
+  }
+  const { error } = await authState.client.rpc("review_recruitment_application", {
+    application_id: applicationId,
+    decision
+  });
+  if (error) {
+    showToast(`신청을 처리하지 못했습니다: ${error.message}`);
+    return;
+  }
+
+  try {
+    await refreshRecruitmentData();
+    showToast(decision === "approved" ? "참여 신청을 승인했어요." : "참여 신청을 거절했어요.");
+  } catch (error) {
+    showToast(`처리 결과를 새로고침하지 못했습니다: ${error.message}`);
+  }
+}
+
 function closeModal() {
   modalBackdrop.hidden = true;
 }
@@ -594,38 +703,29 @@ document.addEventListener("click", (event) => {
       if (selectedPost) setPage("detail");
       break;
     }
+    case "review-application":
+      void reviewApplication(target.dataset.applicationId, target.dataset.decision).catch((error) => {
+        console.error("Application review error:", error.message);
+        showToast(`신청을 처리하지 못했습니다: ${error.message}`);
+      });
+      break;
     case "refresh": showToast("현재 위치 주변의 모집글을 보여드리고 있어요."); break;
     case "apply":
       if (isPostOwner(selectedPost)) {
         showToast("내가 만든 모집글에는 동참 신청할 수 없어요.");
         break;
       }
-      if (appliedPostId !== null && appliedPostId !== selectedPost.id) {
-        showToast("한 번에 하나의 모집글에만 신청할 수 있어요.");
-        break;
-      }
       if (selectedPost.joined >= selectedPost.max) {
         showToast("모집 인원이 모두 찼어요.");
         break;
       }
-      appliedPostId = appliedPostId === selectedPost.id ? null : selectedPost.id;
-      render();
-      showToast(appliedPostId === selectedPost.id ? "동참 신청을 보냈어요. 리더의 승인을 기다려 주세요!" : "신청을 취소했어요. 다른 모집글에 신청할 수 있어요.");
+      void applyToPost().catch((error) => {
+        console.error("Application submission error:", error.message);
+        showToast(`신청을 처리하지 못했습니다: ${error.message}`);
+      });
       break;
     case "leader-profile":
       openModal(`<div class="eyebrow">NEIGHBOR PROFILE</div><h2>${escapeHTML(selectedPost.leader)}님의 프로필</h2><p>함께한 이웃의 평판과 거래 경험을 확인해 보세요.</p><div class="reputation-row"><div><strong><span class="star">★</span> ${selectedPost.rating}</strong>평점</div><div><strong>${selectedPost.trades}회</strong>거래</div><div><strong>100%</strong>매너</div></div><p>“약속 시간을 잘 지키고 따뜻한 이웃이에요!”</p><button class="primary-button" id="modalDone">확인</button>`);
-      break;
-    case "accept":
-      showToast(`${target.dataset.name}님의 신청을 수락했어요. 공동 채팅방에 초대됩니다.`);
-      target.closest(".applicant-row").remove();
-      setPage("chat");
-      break;
-    case "reject":
-      showToast(`${target.dataset.name}님의 신청을 거절했어요.`);
-      target.closest(".applicant-row").remove();
-      break;
-    case "applicant-profile":
-      openModal(`<div class="eyebrow">APPLICANT PROFILE</div><h2>${target.dataset.name}님의 평판</h2><p>⭐ 4.9 · 공동배달 31회 · 후기 24개</p><p>최근 활동: 오늘 오후 6:42<br />최근 후기: “친절하고 답장이 빨라서 같이 주문하기 편했어요.”</p><p>신청 메뉴: 숯불양념 순살 치킨</p><button class="primary-button" id="modalDone">확인</button>`);
       break;
     case "close-post": showToast("모집을 마감했어요. 이미 수락한 참여자와는 계속 진행할 수 있어요."); break;
     case "confirm-order": showToast("주문 내용을 확정했어요. 이제 참여자별 입금이 시작돼요."); setPage("payment"); break;

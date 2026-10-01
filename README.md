@@ -30,7 +30,7 @@ GitHub 저장소를 Vercel에 가져오고 Framework Preset은 `Other`, Root Dir
 
 Supabase 프로젝트를 만들고 **Project Settings → API**에서 Project URL과 publishable/anon 키를 확인해 Vercel 환경 변수 `SUPABASE_URL`, `SUPABASE_ANON_KEY`에 등록합니다. service_role 키는 절대 브라우저나 환경 변수 응답에 사용하지 마세요. Supabase의 **Authentication → Providers → Email**에서 이메일 로그인을 켜고, **Authentication → URL Configuration**의 Site URL에 배포 도메인을 입력합니다. Redirect URLs에도 이메일 인증과 비밀번호 재설정에 사용할 배포 주소를 추가합니다. Vercel 환경 변수 등록 후 재배포하면 로그인, 회원가입, 이메일 인증, 로그아웃, 비밀번호 재설정 화면이 활성화됩니다.
 
-모집글을 여러 사용자에게 공유하려면 Supabase **SQL Editor**에서 아래 스키마를 한 번 실행하세요. 공개 모집글은 로그인 전에도 조회할 수 있고, 등록은 로그인 사용자만 가능하며, 본인 소유 글에만 접근 정책상 변경 권한이 있습니다.
+모집글을 여러 사용자에게 공유하려면 Supabase **SQL Editor**에서 앞서 안내한 `recruitment_posts` 스키마를 실행하고, 저장소의 [`supabase/applications.sql`](./supabase/applications.sql) 내용을 추가로 실행하세요. 공개 모집글은 로그인 전에도 조회할 수 있고, 등록과 신청은 로그인 사용자만 가능하며, 승인/거절은 모집글 소유자만 가능합니다.
 
 ```sql
 create table if not exists public.recruitment_posts (
@@ -81,7 +81,7 @@ grant select on public.recruitment_posts to anon, authenticated;
 grant insert, update, delete on public.recruitment_posts to authenticated;
 ```
 
-로그인한 사용자가 만든 모집글은 Supabase에 저장되고 다른 방문자에게 공유됩니다. 신청자 관리에서 본인 글을 확인할 수 있으며, 본인 모집글에는 동참 신청할 수 없습니다. 단, 신청/승인 흐름, 채팅, 결제 분담액은 아직 데모 기능입니다. 계정 데이터는 Supabase에 저장되지만 별도 profile 테이블과 모집글 작성 전 데이터는 연결되지 않습니다.
+신청자가 모집글에서 동참 신청을 누르면 Supabase에 대기 신청이 저장됩니다. 모집글 소유자는 **신청자 관리**에서 신청을 승인하거나 거절할 수 있고, 승인은 정원도 원자적으로 확인해 갱신합니다. 신청자는 대기 중인 신청을 취소할 수 있습니다. 신청/승인 후 채팅 초대와 결제 분담액 연동은 아직 데모 기능입니다.
 
 ### 가상계좌 환불 필수 설정
 
@@ -93,4 +93,4 @@ grant insert, update, delete on public.recruitment_posts to authenticated;
 
 ## 범위 및 실서비스 전환 전 필수 작업
 
-이메일 인증과 모집글 저장/공개 조회는 Supabase를 사용하지만, 신청/승인 흐름, 채팅, 사용자별 부담액 계산, 분쟁 처리, 가상계좌 정산 및 서비스 운영에 필요한 Toss 계약·심사는 포함하지 않습니다. 결제 서버는 데모 공동배달 ID와 고정 참여자만 허용하고 Toss 테스트 API 키만 받습니다. 자동 취소·환불 흐름은 새 데모 ID를 사용하므로 이전 테스트의 Redis 기록과 분리됩니다. 가상계좌 한 건은 한 참여자의 결제이므로 참여자별로 발급됩니다. 테스트 키를 실서비스 키로 바꾸는 것만으로 실서비스 전환이 되지 않습니다.
+이메일 인증과 모집글 저장/공개 조회, 신청 승인/거절은 Supabase를 사용하지만, 승인 뒤 채팅 초대, 사용자별 부담액 계산, 분쟁 처리, 가상계좌 정산 및 서비스 운영에 필요한 Toss 계약·심사는 포함하지 않습니다. 결제 서버는 데모 공동배달 ID와 고정 참여자만 허용하고 Toss 테스트 API 키만 받습니다. 자동 취소·환불 흐름은 새 데모 ID를 사용하므로 이전 테스트의 Redis 기록과 분리됩니다. 가상계좌 한 건은 한 참여자의 결제이므로 참여자별로 발급됩니다. 테스트 키를 실서비스 키로 바꾸는 것만으로 실서비스 전환이 되지 않습니다.
