@@ -202,8 +202,13 @@ function updateDeadlineCountdowns() {
 function updatePaymentCountdown() {
   const timer = document.querySelector("[data-payment-deadline]");
   if (!timer) return;
-  const remaining = Date.parse(timer.dataset.paymentDeadline || "") - Date.now();
-  const expired = !Number.isFinite(remaining) || remaining <= 0;
+  const deadlineValue = timer.dataset.paymentDeadline || "";
+  const numericDeadline = Number(deadlineValue);
+  const deadlineAt = Number.isFinite(numericDeadline) && numericDeadline > 0
+    ? numericDeadline
+    : Date.parse(deadlineValue);
+  const remaining = deadlineAt - Date.now();
+  const expired = !Number.isFinite(deadlineAt) || remaining <= 0;
   if (expired) {
     timer.textContent = "입금 시간 종료 · 취소/환불 처리 중";
     timer.classList.add("deadline-expired");
