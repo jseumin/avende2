@@ -651,20 +651,24 @@ function paymentPage() {
   if (!post) return groupPageEmptyState("입금 현황", "입금 내역을 보려면 모집글을 만들거나 참여 신청이 승인되어야 해요.");
   const people = groupParticipants(post);
   const total = people.reduce((sum, person) => sum + person.amount, 0);
-  const paidTotal = people.filter((person) => virtualAccounts.get(person.id)?.status === "PAID").reduce((sum, person) => sum + person.amount, 0);
-  const paidCount = people.filter((person) => virtualAccounts.get(person.id)?.status === "PAID").length;
+  const depositedStatuses = new Set(["PAID", "REFUND_REQUESTED", "REFUND_ACTION_REQUIRED"]);
+  const depositedPeople = people.filter((person) => depositedStatuses.has(virtualAccounts.get(person.id)?.status));
+  const paidTotal = depositedPeople.reduce((sum, person) => sum + person.amount, 0);
+  const paidCount = depositedPeople.length;
+  const refundActionPeople = people.filter((person) => virtualAccounts.get(person.id)?.status === "REFUND_ACTION_REQUIRED");
+  const refundActionSummary = refundActionPeople.map((person) => `${person.name} · ${won(person.amount)}`).join(", ");
   const allPaid = people.length > 0 && paidCount === people.length;
   const menusReady = people.every((person) => person.amount > 0);
   const groupOpen = !paymentGroup || paymentGroup.status === "COLLECTING";
   return `<div class="page-heading"><div><div class="eyebrow">PARTICIPANT VIRTUAL ACCOUNTS</div><h1>함께 입금하기</h1><p class="subheading">${escapeHTML(post.restaurant)} · 각자 선택한 메뉴 금액을 부담해요.</p></div><button class="secondary-button" data-page="chat">← 채팅방</button></div>
-    <div class="detail-layout"><section class="page-card"><div class="payment-total"><small>총 결제 예정 금액</small><strong>${won(total)}</strong></div><div class="section-title" style="margin-top:22px"><h2>입금 현황</h2><span class="subheading">${paidCount} / ${people.length}명 완료</span></div>
+    <div class="detail-layout"><section class="page-card"><div class="payment-total"><small>총 결제 예정 금액</small><strong>${won(total)}</strong></div><div class="section-title" style="margin-top:22px"><h2>입금 현황</h2><span class="subheading">${paidCount} / ${people.length}명 입금 확인</span></div>
       ${!menusReady ? `<div class="account-info-box"><strong>메뉴 선택을 기다리고 있어요</strong><span>리더와 승인된 참가자가 메뉴를 선택하면 각자의 분담 금액이 표시됩니다.</span></div>` : people.map((person) => {
         const account = virtualAccounts.get(person.id);
         const status = account?.status || "NOT_ISSUED";
         const paidStatus = status === "PAID";
         const statusLabel = paidStatus ? "입금 완료"
-          : status === "REFUND_REQUESTED" ? "환불 처리 중"
-            : status === "REFUND_ACTION_REQUIRED" ? "환불 확인 필요"
+          : status === "REFUND_REQUESTED" ? "입금 완료 · 환불 처리 중"
+            : status === "REFUND_ACTION_REQUIRED" ? "입금 완료 · 환불 확인 필요"
               : status === "CANCEL_REQUESTING" ? "취소 처리 중"
                 : status === "EXPIRED" || status === "CANCELED" || status === "FAILED" ? "발급 종료"
                   : status === "WAITING_FOR_DEPOSIT" ? "입금 대기"
@@ -677,7 +681,7 @@ function paymentPage() {
       }).join("")}
       <div class="progress-track"><div class="progress-fill" style="width:${total ? Math.round((paidTotal / total) * 100) : 0}%"></div></div><div class="progress-caption"><span>입금 완료 금액 ${won(paidTotal)}</span><span>${total ? Math.round((paidTotal / total) * 100) : 0}%</span></div>
     </section><aside class="page-card"><div class="section-title"><h2>참여자별 가상계좌</h2><span class="tag">Toss 테스트</span></div><p class="subheading">본인 계좌만 발급·확인할 수 있으며, 실제 입금은 Toss 테스트 계좌에서 진행됩니다.</p>
-      <div class="account-info-box">${virtualAccountError ? `<strong>연동 설정이 필요해요</strong><span>${escapeHTML(virtualAccountError)}</span>` : paymentGroup?.status === "COLLECTING" ? `<strong data-payment-deadline="${paymentGroup.deadlineAt}"></strong><span>첫 계좌 발급 후 5분 안에 전원이 입금하지 않으면 공동 주문을 취소하고 입금된 금액은 환불을 요청합니다.</span>` : paymentGroup?.status === "ORDER_READY" ? "<strong>모든 참여자의 입금이 완료됐어요</strong><span>배달 플랫폼 주문·배송 정보는 별도 연동이 필요합니다.</span>" : paymentGroup?.status === "CANCELLING" ? "<strong>공동배달 취소 처리 중</strong><span>미입금 계좌를 취소하고 입금된 금액의 환불을 요청하고 있어요.</span>" : paymentGroup?.status === "REFUND_ACTION_REQUIRED" ? "<strong>환불 계좌 확인이 필요해요</strong><span>토스 결제내역에서 입금 결제의 환불 정보를 확인해 주세요.</span>" : paymentGroup?.status === "REFUNDING" ? "<strong>공동배달이 취소됐어요</strong><span>환불을 요청했습니다. 은행 처리에는 영업일 기준 시간이 걸릴 수 있어요.</span>" : paymentGroup?.status === "CANCELED" ? "<strong>공동배달이 취소됐어요</strong><span>입금 마감까지 전원이 입금하지 않아 미입금 계좌를 취소했어요.</span>" : menusReady ? "<strong>개인별 메뉴 금액을 확인해 주세요</strong><span>첫 참여자가 계좌 발급을 시작하면 5분 입금 마감이 시작됩니다.</span>" : "<strong>메뉴 선택 대기 중</strong><span>모든 참여자가 메뉴를 선택한 후 계좌를 발급할 수 있습니다.</span>"}</div>
+      <div class="account-info-box">${virtualAccountError ? `<strong>연동 설정이 필요해요</strong><span>${escapeHTML(virtualAccountError)}</span>` : paymentGroup?.status === "COLLECTING" ? `<strong data-payment-deadline="${paymentGroup.deadlineAt}"></strong><span>첫 계좌 발급 후 5분 안에 전원이 입금하지 않으면 공동 주문을 취소하고 입금된 금액은 환불을 요청합니다.</span>` : paymentGroup?.status === "ORDER_READY" ? "<strong>모든 참여자의 입금이 완료됐어요</strong><span>배달 플랫폼 주문·배송 정보는 별도 연동이 필요합니다.</span>" : paymentGroup?.status === "CANCELLING" ? "<strong>공동배달 취소 처리 중</strong><span>미입금 계좌를 취소하고 입금된 금액의 환불을 요청하고 있어요.</span>" : paymentGroup?.status === "REFUND_ACTION_REQUIRED" ? `<strong>입금한 참여자의 환불 계좌 확인이 필요해요</strong><span>${escapeHTML(refundActionSummary)} 입금은 확인됐지만 환불 정보가 없어 환불 처리가 멈췄어요. Toss 결제 내역에서 해당 입금의 환불 정보를 확인해 주세요.</span>` : paymentGroup?.status === "REFUNDING" ? "<strong>공동배달이 취소됐어요</strong><span>환불을 요청했습니다. 은행 처리에는 영업일 기준 시간이 걸릴 수 있어요.</span>" : paymentGroup?.status === "CANCELED" ? "<strong>공동배달이 취소됐어요</strong><span>입금 마감까지 전원이 입금하지 않아 미입금 계좌를 취소했어요.</span>" : menusReady ? "<strong>개인별 메뉴 금액을 확인해 주세요</strong><span>첫 참여자가 계좌 발급을 시작하면 5분 입금 마감이 시작됩니다.</span>" : "<strong>메뉴 선택 대기 중</strong><span>모든 참여자가 메뉴를 선택한 후 계좌를 발급할 수 있습니다.</span>"}</div>
       <div class="account-info-box refund-notice"><strong>환불 계좌 안내</strong><span>자동 환불을 위해 Toss 결제창에서 환불 계좌 입력을 지원하도록 설정해야 합니다.</span></div>
     </aside></div>`;
 }
