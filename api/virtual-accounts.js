@@ -237,10 +237,12 @@ async function handleGet(req, res) {
     return json(res, 403, { error: "본인의 계좌 번호만 조회할 수 있습니다." });
   }
 
-  const group = await readRecord(groupKey(groupId));
   const accounts = await Promise.all(roster.map(async (person) => {
     const participantIdValue = person.participant_id || person.id;
-    const record = await readRecord(accountKey(groupId, participantIdValue));
+    let record = await readRecord(accountKey(groupId, participantIdValue));
+    if (record?.status === "WAITING_FOR_DEPOSIT") {
+      record = await reconcileDepositStatus(record);
+    }
     if (record) return publicAccount(record, participantId === participantIdValue);
     return {
       participantId: participantIdValue,
@@ -249,10 +251,50 @@ async function handleGet(req, res) {
       status: "NOT_ISSUED"
     };
   }));
+  const group = await readRecord(groupKey(groupId));
   return json(res, 200, {
     accounts,
     group: group ? { status: group.status, deadlineAt: group.deadlineAt, refundRequested: group.refundRequested || 0, refundActionRequired: group.refundActionRequired || 0 } : null
   });
+}
+
+async function reconcileDepositStatus(record) {
+  const redisAccountKey = accountKey(record.groupId, record.participantId);
+  const checkKey = `${redisAccountKey}:toss-status-check`;
+  const checkToken = crypto.randomUUID();
+  const acquired = await redisCommand(["SET", checkKey, checkToken, "NX", "EX", "15"]);
+  if (acquired !== "OK") return (await readRecord(redisAccountKey)) || record;
+
+  const latest = await readRecord(redisAccountKey);
+  if (!latest || latest.status !== "WAITING_FOR_DEPOSIT") return latest || record;
+
+  const paymentPath = latest.paymentKey
+    ? `/v1/payments/${encodeURIComponent(latest.paymentKey)}`
+    : `/v1/payments/orders/${encodeURIComponent(latest.orderId)}`;
+  const payment = await tossRequest(paymentPath);
+  if (payment.orderId !== latest.orderId || payment.totalAmount !== latest.amount || payment.method !== "가상계좌") {
+    throw new Error("토스 결제 정보가 주문 내용과 일치하지 않습니다.");
+  }
+  if (payment.status === "DONE") {
+    const paidRecord = {
+      ...latest,
+      status: "PAID",
+      wasPaid: true,
+      paidAt: payment.approvedAt || new Date().toISOString(),
+      virtualAccount: payment.virtualAccount || latest.virtualAccount,
+      refundReceiveAccount: payment.virtualAccount?.refundReceiveAccount || latest.refundReceiveAccount || null
+    };
+    await writeAccountAndOrder(paidRecord);
+    const { markGroupReadyIfPaid } = require("./lib/cancel-group");
+    await markGroupReadyIfPaid(record.groupId);
+    return paidRecord;
+  }
+  if (payment.status === "CANCELED" || payment.status === "EXPIRED") {
+    const updatedRecord = { ...latest, status: payment.status };
+    await writeAccountAndOrder(updatedRecord);
+    return updatedRecord;
+  }
+  return latest;
 }
 
 async function handlePost(req, res) {
