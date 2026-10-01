@@ -1,11 +1,4 @@
-const posts = [
-  { id: 1, restaurant: "꼬꼬아찌 숯불치킨", emoji: "🍗", theme: "chicken", category: "치킨", distance: 120, joined: 2, max: 4, minimum: 30000, amount: 22000, deadline: "12분 후 마감", leader: "민지", rating: "4.9", trades: 28, note: "숯불양념으로 같이 시켜요! 순살도 가능해요." },
-  { id: 2, restaurant: "도미노피자 연남점", emoji: "🍕", theme: "pizza", category: "피자", distance: 180, joined: 1, max: 3, minimum: 25000, amount: 17900, deadline: "25분 후 마감", leader: "준호", rating: "4.8", trades: 16, note: "피자 한 판 같이 나눠 먹어요. 갈릭디핑 추가 예정!" },
-  { id: 3, restaurant: "스시노칸도 홍대점", emoji: "🍣", theme: "sushi", category: "일식", distance: 240, joined: 3, max: 5, minimum: 40000, amount: 31500, deadline: "18분 후 마감", leader: "하은", rating: "5.0", trades: 42, note: "초밥 좋아하시는 분 같이 주문해요 🙌" },
-  { id: 4, restaurant: "다운타우너 연남", emoji: "🍔", theme: "burger", category: "양식", distance: 290, joined: 1, max: 3, minimum: 20000, amount: 12800, deadline: "35분 후 마감", leader: "도윤", rating: "4.7", trades: 11, note: "아보카도 버거 먹을 분 구합니다!" },
-  { id: 5, restaurant: "엽기떡볶이 홍대점", emoji: "🌶️", theme: "tteok", category: "분식", distance: 310, joined: 2, max: 4, minimum: 25000, amount: 18500, deadline: "20분 후 마감", leader: "유진", rating: "4.9", trades: 31, note: "착한맛으로 주문할게요. 튀김도 같이 드실 분!" },
-  { id: 6, restaurant: "멘야하나비 홍대점", emoji: "🍜", theme: "noodle", category: "일식", distance: 350, joined: 1, max: 3, minimum: 30000, amount: 14800, deadline: "40분 후 마감", leader: "시우", rating: "4.8", trades: 19, note: "마제소바 같이 주문해서 배달비 아껴요." }
-];
+const posts = [];
 
 const categories = ["전체", "치킨", "피자", "한식", "중식", "일식", "양식", "분식"];
 const categoryIcons = { 전체: "✦", 치킨: "🍗", 피자: "🍕", 한식: "🍚", 중식: "🥟", 일식: "🍣", 양식: "🍔", 분식: "🍡" };
@@ -16,7 +9,7 @@ const modalContent = document.querySelector("#modalContent");
 let currentPage = "discover";
 let selectedCategory = "전체";
 let sortBy = "distance";
-let selectedPost = posts[0];
+let selectedPost = null;
 let appliedPostId = null;
 let paid = new Set();
 let received = new Set(["민지", "유진"]);
@@ -152,11 +145,8 @@ function createPage() {
 }
 
 function applicantsPage() {
-  const applicants = [{ name: "유진", rating: "4.9", trades: 31, text: "치즈볼도 같이 주문하고 싶어요!" }, { name: "시우", rating: "4.8", trades: 19, text: "숯불양념 순살로 참여할게요." }];
-  return `<div class="page-heading"><div><div class="eyebrow">LEADER DASHBOARD</div><h1>신청자 관리</h1><p class="subheading">함께할 이웃을 확인하고 직접 선택해요.</p></div><button class="secondary-button" data-page="discover">내 모집글 보기</button></div>
-    <div class="detail-layout"><section class="page-card"><div class="section-title"><h2>${posts[0].restaurant}</h2><span class="tag">모집 중</span></div><p class="subheading">신청자 ${applicants.length}명 · 현재 참여 ${posts[0].joined} / ${posts[0].max}명</p>
-      ${applicants.map((person) => `<div class="applicant-row">${avatar(person.name)}<div class="applicant-copy"><strong>${person.name} <span class="star">★</span> ${person.rating} · 거래 ${person.trades}회</strong><small>${person.text}</small></div><div class="applicant-actions"><button class="secondary-button" data-action="applicant-profile" data-name="${person.name}">프로필</button><button class="primary-button" data-action="accept" data-name="${person.name}">수락</button><button class="secondary-button" data-action="reject" data-name="${person.name}">거절</button></div></div>`).join("")}
-    </section><aside class="page-card"><div class="section-title"><h2>모집 현황</h2></div><div class="progress-track"><div class="progress-fill" style="width:50%"></div></div><div class="progress-caption"><span>현재 참여 인원</span><span>2 / 4명</span></div><div class="detail-block"><h3>모집 종료 조건</h3><p>인원이 다 차거나 마감 시간이 되면 새 신청을 받을 수 없어요. 이미 수락한 참여자와는 이후 절차를 진행할 수 있어요.</p></div><button class="secondary-button" style="width:100%;margin-top:16px" data-action="close-post">모집 마감하기</button></aside></div>`;
+  return `<div class="page-heading"><div><div class="eyebrow">LEADER DASHBOARD</div><h1>신청자 관리</h1><p class="subheading">내가 올린 모집글의 신청자를 확인해요.</p></div><button class="secondary-button" data-page="discover">모집글 보기</button></div>
+    <section class="page-card"><div class="empty-state">아직 등록한 모집글이 없어요.<br />모집글을 만들면 이곳에서 신청자를 확인할 수 있어요.<br /><button class="primary-button" style="margin-top:16px" data-page="create">모집글 만들기</button></div></section>`;
 }
 
 async function refreshVirtualAccounts() {
