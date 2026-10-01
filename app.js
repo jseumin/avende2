@@ -195,7 +195,7 @@ function updateDeadlineCountdowns() {
     element.textContent = expired ? "모집 마감" : remainingTime(element.dataset.deadlineAt);
     element.classList.toggle("deadline-expired", expired);
   });
-  if (deadlineJustExpired && currentPage === "delivery") render();
+  if (deadlineJustExpired && ["detail", "applicants", "delivery"].includes(currentPage)) render();
 }
 
 const won = (value) => `${value.toLocaleString("ko-KR")}원`;
@@ -435,15 +435,15 @@ function detailPage() {
       ${(isOwner || applicationStatus === "approved") ? participantOrdersMarkup(post) : ""}
       ${!isOwner && applicationStatus === "approved" ? participantMenuFormMarkup(post, myApplication) : ""}
       <div class="detail-block"><h3>리더의 한마디</h3><p>${escapeHTML(post.note)}</p></div>
-      <div class="detail-block"><h3>모집 안내</h3><p>모집 마감 ${escapeHTML(post.deadline)} · <strong data-deadline-at="${escapeHTML(post.deadlineAt || "")}">${remainingTime(post.deadlineAt)}</strong><br />승인된 참가자는 이 화면에서 메뉴를 선택할 수 있어요. 만남 장소와 수령 시간은 채팅으로 조율해요.</p></div>
+      <div class="detail-block"><h3>모집 안내</h3><p>${post.deadline === "조기 마감" ? "리더가 모집을 조기 마감했어요" : `모집 마감 ${escapeHTML(post.deadline)}`} · <strong data-deadline-at="${escapeHTML(post.deadlineAt || "")}">${remainingTime(post.deadlineAt)}</strong><br />승인된 참가자는 이 화면에서 메뉴를 선택할 수 있어요. 만남 장소와 수령 시간은 채팅으로 조율해요.</p></div>
     </section><aside class="page-card"><div class="section-title"><h2>리더 정보</h2><button class="text-button" data-action="leader-profile">프로필 보기</button></div>
       <div class="leader-card">${avatar(post.leader, true)}<div class="leader-info"><strong>${escapeHTML(post.leader)}</strong><small>따뜻한 한 끼를 함께해요</small></div></div>
       <div class="reputation-row"><div><strong><span class="star">★</span> ${post.rating}</strong>평점</div><div><strong>${post.trades}회</strong>거래 횟수</div><div><strong>100%</strong>매너 온도</div></div>
       <div class="detail-block"><h3>최소주문까지</h3><p style="color:#e68b5d;font-weight:700;font-size:15px">${won(Math.max(post.minimum - post.amount, 0))} 남았어요</p></div>
       ${isOwner
-        ? `<button class="primary-button" style="width:100%;margin-top:17px" data-page="applicants">신청자 관리</button>${post.paymentsStartedAt ? `<div class="join-note">입금이 시작된 모집글은 삭제할 수 없어요.</div>` : `<button class="danger-button" style="width:100%;margin-top:9px" data-action="delete-post">모집글 삭제</button>`}<div class="join-note">내가 만든 모집글이에요. 신청할 수 없습니다.</div>`
+        ? `<button class="primary-button" style="width:100%;margin-top:17px" data-page="applicants">신청자 관리</button>${expired ? "" : `<button class="secondary-button" style="width:100%;margin-top:9px" data-action="close-post">모집 조기 마감</button>`}${post.paymentsStartedAt ? `<div class="join-note">입금이 시작된 모집글은 삭제할 수 없어요.</div>` : `<button class="danger-button" style="width:100%;margin-top:9px" data-action="delete-post">모집글 삭제</button>`}<div class="join-note">내가 만든 모집글이에요. 신청할 수 없습니다.</div>`
         : `<button class="primary-button" style="width:100%;margin-top:17px" data-action="apply" ${applicationStatus === "pending" ? "" : full || expired || applicationStatus === "approved" || applicationStatus === "rejected" ? "disabled" : ""}>${applicationStatus === "pending" ? "신청 취소하기" : applicationStatus === "approved" ? "신청 승인됨" : applicationStatus === "rejected" ? "신청 거절됨" : !authState.user ? "로그인 후 신청" : expired ? "모집 마감" : full ? "모집 인원 마감" : "동참 신청하기"} <span>→</span></button>
-      <div class="join-note">${applicationStatus === "pending" ? "리더의 승인을 기다리고 있어요." : applicationStatus === "approved" ? "모집자가 참여 신청을 승인했어요." : applicationStatus === "rejected" ? "이번 모집글 신청이 거절되었어요." : expired ? "모집 마감 시간이 지났어요." : full ? "모집 인원이 모두 찼어요." : !authState.user ? "신청하려면 로그인해 주세요." : "신청 후 리더의 승인을 기다려요."}</div>`}
+      <div class="join-note">${applicationStatus === "pending" ? "리더의 승인을 기다리고 있어요." : applicationStatus === "approved" ? "모집자가 참여 신청을 승인했어요." : applicationStatus === "rejected" ? "이번 모집글 신청이 거절되었어요." : expired ? post.deadline === "조기 마감" ? "리더가 모집을 조기 마감했어요." : "모집 마감 시간이 지났어요." : full ? "모집 인원이 모두 찼어요." : !authState.user ? "신청하려면 로그인해 주세요." : "신청 후 리더의 승인을 기다려요."}</div>`}
     </aside></div>`;
 }
 
@@ -468,11 +468,12 @@ function applicantsPage() {
     ${myPosts.length
       ? `<section class="owned-post-list">${myPosts.map((post) => {
         const postApplications = applications.filter((application) => application.post_id === post.id);
-        return `<article class="page-card owned-post-card"><div class="section-title"><h2>${escapeHTML(post.restaurant)}</h2><span class="tag">${escapeHTML(post.category)}</span></div><p class="subheading">${escapeHTML(post.deadline)} · <span data-deadline-at="${escapeHTML(post.deadlineAt || "")}">${remainingTime(post.deadlineAt)}</span> · 참여 ${post.joined} / ${post.max}명</p>
+        const postExpired = Date.parse(post.deadlineAt || "") <= Date.now();
+        return `<article class="page-card owned-post-card"><div class="section-title"><h2>${escapeHTML(post.restaurant)}</h2><span class="tag">${escapeHTML(post.category)}</span></div><p class="subheading">${post.deadline === "조기 마감" ? "리더가 조기 마감했어요" : escapeHTML(post.deadline)} · <span data-deadline-at="${escapeHTML(post.deadlineAt || "")}">${remainingTime(post.deadlineAt)}</span> · 참여 ${post.joined} / ${post.max}명</p>
           ${postApplications.length
-            ? postApplications.map((application) => `<div class="applicant-row"><span class="avatar">${escapeHTML(application.applicant_name.slice(0, 1))}</span><div class="applicant-copy"><strong>${escapeHTML(application.applicant_name)}</strong><small>${application.status === "pending" ? "참여 신청을 보냈어요." : application.status === "approved" ? "신청을 승인했어요." : "신청을 거절했어요."}</small></div><div class="applicant-actions">${application.status === "pending" ? `<button class="primary-button" data-action="review-application" data-application-id="${application.id}" data-decision="approved">승인</button><button class="secondary-button" data-action="review-application" data-application-id="${application.id}" data-decision="rejected">거절</button>` : `<span class="status-pill ${application.status === "approved" ? "status-paid" : "status-pending"}">${application.status === "approved" ? "승인됨" : "거절됨"}</span>`}</div></div>`).join("")
+            ? postApplications.map((application) => `<div class="applicant-row"><span class="avatar">${escapeHTML(application.applicant_name.slice(0, 1))}</span><div class="applicant-copy"><strong>${escapeHTML(application.applicant_name)}</strong><small>${application.status === "pending" ? postExpired ? "마감되어 더 이상 승인할 수 없어요." : "참여 신청을 보냈어요." : application.status === "approved" ? "신청을 승인했어요." : "신청을 거절했어요."}</small></div><div class="applicant-actions">${application.status === "pending" ? `<button class="primary-button" data-action="review-application" data-application-id="${application.id}" data-decision="approved" ${postExpired ? "disabled" : ""}>승인</button><button class="secondary-button" data-action="review-application" data-application-id="${application.id}" data-decision="rejected">거절</button>` : `<span class="status-pill ${application.status === "approved" ? "status-paid" : "status-pending"}">${application.status === "approved" ? "승인됨" : "거절됨"}</span>`}</div></div>`).join("")
             : `<p class="subheading">아직 신청한 사람이 없어요.</p>`}
-          <div class="owned-post-actions"><button class="secondary-button" data-action="manage-owned-post" data-post-id="${post.id}">모집글 확인</button>${post.paymentsStartedAt ? `<span class="join-note">입금 중 · 삭제 불가</span>` : `<button class="danger-button" data-action="delete-post" data-post-id="${post.id}">삭제</button>`}</div></article>`;
+          <div class="owned-post-actions"><button class="secondary-button" data-action="manage-owned-post" data-post-id="${post.id}">모집글 확인</button>${Date.parse(post.deadlineAt || "") > Date.now() ? `<button class="secondary-button" data-action="close-post" data-post-id="${post.id}">조기 마감</button>` : ""}${post.paymentsStartedAt ? `<span class="join-note">입금 중 · 삭제 불가</span>` : `<button class="danger-button" data-action="delete-post" data-post-id="${post.id}">삭제</button>`}</div></article>`;
       }).join("")}</section>`
       : `<section class="page-card"><div class="empty-state">아직 등록한 모집글이 없어요.<br />모집글을 만들면 이곳에서 신청자를 확인할 수 있어요.<br /><button class="primary-button" style="margin-top:16px" data-page="create">모집글 만들기</button></div></section>`}`;
 }
@@ -1017,6 +1018,39 @@ async function reviewApplication(applicationId, decision) {
   }
 }
 
+async function closeRecruitmentPost(postId = selectedPost?.id) {
+  await authInitialization;
+  if (!authState.client || !authState.user || !postId) {
+    showToast("모집글을 조기 마감하려면 로그인하고 다시 시도해 주세요.");
+    return;
+  }
+  const post = posts.find((item) => String(item.id) === String(postId));
+  if (!post || !isPostOwner(post)) {
+    showToast("내가 작성한 모집글만 조기 마감할 수 있어요.");
+    return;
+  }
+  if (Date.parse(post.deadlineAt || "") <= Date.now()) {
+    showToast("이미 마감된 모집글이에요.");
+    return;
+  }
+  if (!window.confirm("모집을 지금 마감할까요? 이후에는 새 신청을 받거나 대기 중인 신청을 승인할 수 없지만, 이미 승인된 참가자와는 계속 진행할 수 있어요.")) return;
+
+  const { error } = await authState.client.rpc("close_recruitment_post", {
+    p_post_id: post.id
+  });
+  if (error) {
+    showToast(`모집글을 조기 마감하지 못했습니다: ${error.message}`);
+    return;
+  }
+
+  try {
+    await refreshRecruitmentData();
+    showToast("모집을 조기 마감했어요. 승인된 참가자와의 공동 주문은 계속 이용할 수 있어요.");
+  } catch (error) {
+    showToast(`모집은 마감했지만 화면을 새로고침하지 못했습니다: ${error.message}`);
+  }
+}
+
 async function saveParticipantMenu(form) {
   await authInitialization;
   if (!authState.client || !authState.user || !selectedPost) {
@@ -1220,7 +1254,12 @@ document.addEventListener("click", (event) => {
     case "leader-profile":
       openModal(`<div class="eyebrow">NEIGHBOR PROFILE</div><h2>${escapeHTML(selectedPost.leader)}님의 프로필</h2><p>함께한 이웃의 평판과 거래 경험을 확인해 보세요.</p><div class="reputation-row"><div><strong><span class="star">★</span> ${selectedPost.rating}</strong>평점</div><div><strong>${selectedPost.trades}회</strong>거래</div><div><strong>100%</strong>매너</div></div><p>“약속 시간을 잘 지키고 따뜻한 이웃이에요!”</p><button class="primary-button" id="modalDone">확인</button>`);
       break;
-    case "close-post": showToast("모집을 마감했어요. 이미 수락한 참여자와는 계속 진행할 수 있어요."); break;
+    case "close-post":
+      void closeRecruitmentPost(target.dataset.postId).catch((error) => {
+        console.error("Recruitment early-close error:", error.message);
+        showToast(`모집글을 조기 마감하지 못했습니다: ${error.message}`);
+      });
+      break;
     case "open-own-menu": setPage("detail"); break;
     case "participant-account":
       void showParticipantAccount(target.dataset.participant).catch((error) => {

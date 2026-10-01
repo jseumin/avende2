@@ -84,14 +84,15 @@ grant select on public.recruitment_posts to anon, authenticated;
 grant insert, update, delete on public.recruitment_posts to authenticated;
 ```
 
-기존 DB에는 아래 SQL을 순서대로 적용하세요. `recruitment-menu-columns.sql`은 이전 메뉴 기능을 위해 이미 실행했다면 건너뛰면 됩니다.
+기존 DB에는 아직 실행하지 않은 SQL을 아래 순서대로 적용하세요. `recruitment-menu-columns.sql`을 이미 적용했다면 건너뛰면 됩니다. 앞의 네 마이그레이션을 이미 적용한 기존 설치는 조기 마감 기능을 위해 5번만 추가 실행하면 됩니다.
 
 1. [`supabase/applications.sql`](./supabase/applications.sql)
 2. [`supabase/recruitment-menu-columns.sql`](./supabase/recruitment-menu-columns.sql) (이미 실행한 경우 생략)
 3. [`supabase/recruitment-menu-selections.sql`](./supabase/recruitment-menu-selections.sql)
 4. [`supabase/recruitment-group-workflows.sql`](./supabase/recruitment-group-workflows.sql)
+5. [`supabase/recruitment-early-close.sql`](./supabase/recruitment-early-close.sql)
 
-마지막 마이그레이션은 모집 마감 시각과 남은 시간, 승인된 참여자 전용 채팅/수령 확인, 결제 시작 잠금 및 그룹별 결제 roster를 설정합니다. 기존 모집글의 마감 시각은 저장된 생성 시각과 기존 마감 문구를 바탕으로 채웁니다. 모집글 작성자는 상세 화면이나 신청자 관리에서 본인 모집글을 삭제할 수 있으며, 연결된 신청 내역도 함께 삭제됩니다. 앱의 음식점·메뉴·최소주문금액은 현재 테스트용 목록으로 제공되며, 실제 배달 플랫폼이나 음식점 메뉴 API와 연동된 것은 아닙니다.
+마지막 두 마이그레이션은 모집 마감 시각과 남은 시간, 승인된 참여자 전용 채팅/수령 확인, 결제 시작 잠금 및 그룹별 결제 roster를 설정하고 리더의 조기 마감을 지원합니다. 기존 모집글의 마감 시각은 저장된 생성 시각과 기존 마감 문구를 바탕으로 채웁니다. 리더는 상세 화면이나 신청자 관리에서 모집을 조기 마감할 수 있으며, 이후 새 신청과 대기 중인 신청 승인은 차단되고 이미 승인된 구성원은 계속 공동 주문을 이용할 수 있습니다. 모집글 작성자는 본인 모집글을 삭제할 수 있으며, 연결된 신청 내역도 함께 삭제됩니다. 앱의 음식점·메뉴·최소주문금액은 현재 테스트용 목록으로 제공되며, 실제 배달 플랫폼이나 음식점 메뉴 API와 연동된 것은 아닙니다.
 
 모집글 작성에서 음식점을 선택하면 테스트 목록의 메뉴와 수량을 고를 수 있고, 메뉴 가격으로 주문 합계를 계산합니다. 신청자가 모집글에서 동참 신청을 누르면 Supabase에 저장되며, 모집글 소유자는 신청을 승인하거나 거절할 수 있습니다. 승인된 참가자는 모집글 상세에서 본인 메뉴를 저장하고, 자신의 메뉴 금액대로 Toss 테스트 가상계좌를 발급할 수 있습니다. 채팅 메시지, 참가자별 메뉴, Toss 입금 상태, 실제 수령 확인은 모집글별로 연결됩니다. 결제 시작 뒤에는 메뉴 변경이 잠기며, 마감 시간 경과 후 미입금 계좌 취소와 입금 완료분 환불 흐름은 QStash/Toss 테스트 연동을 사용합니다. 주문/배달 상태는 실제 배달 플랫폼 API가 없어 자동 표시하지 않습니다. 진행 상황은 확인 가능한 모집·메뉴·입금 및 참가자 수령 확인만 표시합니다.
 
