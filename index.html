@@ -42,7 +42,9 @@
       <main class="main-area">
         <header class="topbar">
           <div class="mobile-brand"><span class="brand-mark">모</span> 모아먹자<span class="brand-period">.</span></div>
-          <div class="location-pill"><span class="pin">⌖</span><span>서울시 마포구 <strong>연남동</strong></span><span class="chevron">⌄</span></div>
+          <button class="location-pill" id="locationButton" type="button" data-action="get-location" aria-label="현재 위치 가져오기" title="눌러서 현재 위치를 확인하세요">
+            <span class="pin" aria-hidden="true">⌖</span><span id="locationLabel" aria-live="polite">내 위치 설정</span><span class="chevron" aria-hidden="true">⌄</span>
+          </button>
           <div class="topbar-right">
             <button class="icon-button notification" aria-label="알림">♧<i></i></button>
             <button class="text-button" id="authButton" data-action="auth-open">로그인</button>

@@ -61,6 +61,7 @@ let sortBy = "distance";
 let selectedPost = null;
 let paid = new Set();
 let rating = 0;
+let currentLocation = null;
 const virtualAccounts = new Map();
 let virtualAccountError = "";
 let accountRefreshTimer = null;
@@ -333,6 +334,42 @@ function showToast(message) {
   toast.classList.add("visible");
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
+}
+
+function requestCurrentLocation(button) {
+  if (!navigator.geolocation) {
+    showToast("이 브라우저에서는 위치 기능을 사용할 수 없어요.");
+    return;
+  }
+  if (!window.isSecureContext) {
+    showToast("위치 기능은 HTTPS 또는 localhost에서 사용할 수 있어요.");
+    return;
+  }
+
+  button.disabled = true;
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      currentLocation = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude
+      };
+      const label = document.querySelector("#locationLabel");
+      label.textContent = `위도 ${currentLocation.latitude.toFixed(3)}° · 경도 ${currentLocation.longitude.toFixed(3)}°`;
+      button.title = "현재 위치를 확인했어요. 다시 누르면 위치를 새로 확인합니다.";
+      button.disabled = false;
+      showToast("현재 위치를 확인했어요. 위치 정보는 이 브라우저에서만 사용돼요.");
+    },
+    (error) => {
+      button.disabled = false;
+      const messages = {
+        1: "위치 권한이 거부됐어요. 브라우저 사이트 설정에서 허용해 주세요.",
+        2: "현재 위치를 확인할 수 없어요. 잠시 후 다시 시도해 주세요.",
+        3: "위치 확인 시간이 초과됐어요. 다시 시도해 주세요."
+      };
+      showToast(messages[error.code] || "위치를 확인하지 못했어요. 다시 시도해 주세요.");
+    },
+    { enableHighAccuracy: false, maximumAge: 60_000, timeout: 10_000 }
+  );
 }
 
 async function readApiResponse(response, fallbackMessage) {
@@ -1236,6 +1273,9 @@ document.addEventListener("click", (event) => {
     return;
   }
   switch (target.dataset.action) {
+    case "get-location":
+      requestCurrentLocation(target);
+      break;
     case "auth-open": showAuthModal("login"); break;
     case "auth-mode-login": showAuthModal("login"); break;
     case "auth-mode-signup": showAuthModal("signup"); break;

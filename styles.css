@@ -49,8 +49,10 @@ a { color: inherit; text-decoration: none; }
 .main-area { margin-left: 246px; min-height: 100vh; }
 .topbar { height: 72px; background: rgba(255,255,255,.92); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 4.1%; position: sticky; top: 0; z-index: 4; backdrop-filter: blur(12px); }
 .mobile-brand { display: none; }
-.location-pill { display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; color: #777e89; font-size: 11px; }
-.location-pill strong { color: #373c45; }
+.location-pill { display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; color: #777e89; background: #fff; font-size: 11px; }
+.location-pill:hover { border-color: #c9e8d6; background: #fbfefc; }
+.location-pill:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.location-pill:disabled { cursor: wait; opacity: .65; }
 .pin { color: var(--green); font-size: 17px; }
 .chevron { color: #aab0b9; font-size: 12px; }
 .topbar-right { display: flex; align-items: center; gap: 20px; }
