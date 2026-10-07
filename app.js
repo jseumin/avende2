@@ -336,6 +336,29 @@ function showToast(message) {
   showToast.timer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
 }
 
+async function reverseGeocodeLocation(latitude, longitude) {
+  const params = new URLSearchParams({
+    format: "jsonv2",
+    addressdetails: "1",
+    "accept-language": "ko",
+    lat: String(latitude),
+    lon: String(longitude)
+  });
+  const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`);
+  if (!response.ok) throw new Error(`주소 변환 요청 실패 (${response.status})`);
+  const result = await response.json();
+  const address = result.address;
+  if (!address || typeof address !== "object") throw new Error("주소 정보가 응답에 없어요.");
+
+  const locality = [
+    address.city || address.town || address.village || address.municipality || address.state,
+    address.city_district || address.county || address.borough,
+    address.suburb || address.neighbourhood || address.quarter || address.hamlet
+  ].filter((part, index, parts) => typeof part === "string" && part.trim() && parts.indexOf(part) === index);
+  if (!locality.length) throw new Error("이 위치의 시·구·동 주소를 찾지 못했어요.");
+  return locality.join(" ");
+}
+
 function requestCurrentLocation(button) {
   if (!navigator.geolocation) {
     showToast("이 브라우저에서는 위치 기능을 사용할 수 없어요.");
@@ -347,20 +370,32 @@ function requestCurrentLocation(button) {
   }
 
   button.disabled = true;
+  const label = document.querySelector("#locationLabel");
+  label.textContent = "위치 확인 중…";
   navigator.geolocation.getCurrentPosition(
     (position) => {
       currentLocation = {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude
       };
-      const label = document.querySelector("#locationLabel");
-      label.textContent = `위도 ${currentLocation.latitude.toFixed(3)}° · 경도 ${currentLocation.longitude.toFixed(3)}°`;
-      button.title = "현재 위치를 확인했어요. 다시 누르면 위치를 새로 확인합니다.";
-      button.disabled = false;
-      showToast("현재 위치를 확인했어요. 위치 정보는 이 브라우저에서만 사용돼요.");
+      void reverseGeocodeLocation(currentLocation.latitude, currentLocation.longitude)
+        .then((address) => {
+          label.textContent = address;
+          button.title = "현재 위치를 확인했어요. 다시 누르면 위치를 새로 확인합니다.";
+          showToast("현재 위치를 주소로 확인했어요.");
+        })
+        .catch((error) => {
+          label.textContent = "주소 확인 실패";
+          console.error("Location reverse-geocoding error:", error);
+          showToast(`주소를 변환하지 못했습니다: ${error.message}`);
+        })
+        .finally(() => {
+          button.disabled = false;
+        });
     },
     (error) => {
       button.disabled = false;
+      label.textContent = "내 위치 설정";
       const messages = {
         1: "위치 권한이 거부됐어요. 브라우저 사이트 설정에서 허용해 주세요.",
         2: "현재 위치를 확인할 수 없어요. 잠시 후 다시 시도해 주세요.",

@@ -42,9 +42,12 @@
       <main class="main-area">
         <header class="topbar">
           <div class="mobile-brand"><span class="brand-mark">모</span> 모아먹자<span class="brand-period">.</span></div>
-          <button class="location-pill" id="locationButton" type="button" data-action="get-location" aria-label="현재 위치 가져오기" title="눌러서 현재 위치를 확인하세요">
-            <span class="pin" aria-hidden="true">⌖</span><span id="locationLabel" aria-live="polite">내 위치 설정</span><span class="chevron" aria-hidden="true">⌄</span>
-          </button>
+          <div class="location-control">
+            <button class="location-pill" id="locationButton" type="button" data-action="get-location" aria-label="현재 위치 가져오기" title="누르면 위치 좌표를 OpenStreetMap에 보내 주소로 변환합니다.">
+              <span class="pin" aria-hidden="true">⌖</span><span id="locationLabel" aria-live="polite">내 위치 설정</span><span class="chevron" aria-hidden="true">⌄</span>
+            </button>
+            <a class="location-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer" title="주소 조회 시 위치 좌표가 OpenStreetMap으로 전송됩니다.">주소 변환 · © OpenStreetMap</a>
+          </div>
           <div class="topbar-right">
             <button class="icon-button notification" aria-label="알림">♧<i></i></button>
             <button class="text-button" id="authButton" data-action="auth-open">로그인</button>
